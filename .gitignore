@@ -1,0 +1,40 @@
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+.shard/
+.claude/
+.crush/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Debug logs (generated when DEBUG_MODE is enabled)
+debug_logs*/
+debug*.json
+
+# Project-specific
+_notes/
+requests/
+.kiro-gateway*.log
+.kiro-gateway*.pid
+.kiro-gateway*.state
+.runtime/
+.p0-smoke*.log
+tmp_*smoke*.ps1
+
+# Testing
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/

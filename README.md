@@ -1,6 +1,6 @@
 <div align="center">
 
-# 👻 Kiro Gateway
+# 👻 Win Kiro Gateway
 
 **本地 Kiro 逆向代理，提供 OpenAI / Anthropic 兼容接口**
 
@@ -8,9 +8,11 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
 
+> 本仓库 fork 自 [jwadow/kiro-gateway](https://github.com/jwadow/kiro-gateway)，在其基础上进行了魔改和定制。
+
 *当前仓库以 Windows + PowerShell 场景为主，使用 `.env` 和 `kiro-gateway-v2.ps1` 启动本地代理，再将本地 URL 和 key 配置给 Cherry Studio、Cursor、Cline、OpenAI SDK 等兼容工具。*
 
-[Models](#-available-models) • [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#%EF%B8%8F-configuration)
+[Models](#-available-models) • [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#%EF%B8%8F-configuration) • [Original Project](https://github.com/jwadow/kiro-gateway)
 
 </div>
 
@@ -322,8 +324,8 @@ docker run -d \
   -p 8000:8000 \
   -e PROXY_API_KEY="my-super-secret-password-123" \
   -e REFRESH_TOKEN="your_refresh_token" \
-  --name kiro-gateway \
-  ghcr.io/jwadow/kiro-gateway:latest
+  --name win-kiro-gateway \
+  ghcr.io/kelongyan/win-kiro-gateway:latest
 ```
 
 </details>
@@ -338,8 +340,8 @@ docker run -d \
   -v ~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro \
   -e KIRO_CREDS_FILE=/home/kiro/.aws/sso/cache/kiro-auth-token.json \
   -e PROXY_API_KEY="my-super-secret-password-123" \
-  --name kiro-gateway \
-  ghcr.io/jwadow/kiro-gateway:latest
+  --name win-kiro-gateway \
+  ghcr.io/kelongyan/win-kiro-gateway:latest
 ```
 
 **Windows (PowerShell):**
@@ -349,8 +351,8 @@ docker run -d `
   -v ${HOME}/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro `
   -e KIRO_CREDS_FILE=/home/kiro/.aws/sso/cache/kiro-auth-token.json `
   -e PROXY_API_KEY="my-super-secret-password-123" `
-  --name kiro-gateway `
-  ghcr.io/jwadow/kiro-gateway:latest
+  --name win-kiro-gateway `
+  ghcr.io/kelongyan/win-kiro-gateway:latest
 ```
 
 </details>
@@ -359,7 +361,7 @@ docker run -d `
 <summary>🔹 Using .env File</summary>
 
 ```bash
-docker run -d -p 8000:8000 --env-file .env --name kiro-gateway ghcr.io/jwadow/kiro-gateway:latest
+docker run -d -p 8000:8000 --env-file .env --name win-kiro-gateway ghcr.io/kelongyan/win-kiro-gateway:latest
 ```
 
 </details>
@@ -395,8 +397,8 @@ docker-compose pull && docker-compose up -d  # Update
 <summary>🔧 Building from Source</summary>
 
 ```bash
-docker build -t kiro-gateway .
-docker run -d -p 8000:8000 --env-file .env kiro-gateway
+docker build -t win-kiro-gateway .
+docker run -d -p 8000:8000 --env-file .env win-kiro-gateway
 ```
 
 </details>
@@ -739,7 +741,6 @@ This repository is an unofficial local proxy project for personal deployment and
 
 <div align="center">
 
-**[⬆ Back to Top](#-kiro-gateway)**
+**[⬆ Back to Top](#-win-kiro-gateway)**
 
 </div>
-# win-kiro-gateway

@@ -21,14 +21,15 @@ python -m pip install -r requirements.txt
 ### 运行服务
 
 ```powershell
-# 推荐的 Windows PowerShell 启动方式
+# 推荐的 Windows PowerShell 启动方式（自动管理进程、日志和状态）
 .\kiro-gateway-v2.ps1
 
 # 直接运行应用
 python main.py
 
-# 指定 host / port
+# 指定 host / port（优先级：CLI 参数 > 环境变量 > 默认值）
 python main.py --host 127.0.0.1 --port 9000
+python main.py -H 0.0.0.0 -p 8080
 
 # 使用 uvicorn
 uvicorn main:app --host 127.0.0.1 --port 8000
@@ -97,13 +98,15 @@ docker build -t win-kiro-gateway .
 
 - `main.py` 负责显式加载 `.env`、校验配置、注入代理环境变量、创建 FastAPI app、注册中间件和路由。
 - `create_app()` 注册 CORS、`DebugLoggerMiddleware`、Pydantic 校验异常处理器，以及 OpenAI / Anthropic 两套路由。
-- `lifespan()` 创建应用级共享 `httpx.AsyncClient`、`KiroAuthManager`、`ModelInfoCache` 和 `ModelResolver`。启动时会请求 Kiro `/ListAvailableModels` 填充模型缓存，失败时使用 `FALLBACK_MODELS`。
+- `lifespan()` 创建应用级共享 `httpx.AsyncClient`、`KiroAuthManager`、`ModelInfoCache`、`ModelResolver` 和请求并发限制器（`asyncio.Semaphore`）。启动时会请求 Kiro `/ListAvailableModels` 填充模型缓存，失败时使用 `FALLBACK_MODELS`。
+- 并发限制通过 `MAX_CONCURRENT_REQUESTS` 和 `REQUEST_QUEUE_TIMEOUT` 配置，避免同时发起过多上游请求。
 
 ### 配置
 
 - `kiro/config.py` 集中读取环境变量、默认值、模型别名、隐藏模型、fallback 模型、超时、debug、fake reasoning、truncation recovery 等配置。
 - `load_runtime_env()` 只在应用启动阶段显式调用，避免普通模块导入和测试被本地 `.env` 污染。
 - Windows 路径相关配置（如 `KIRO_CREDS_FILE`、`KIRO_CLI_DB_FILE`）通过原始 `.env` 读取逻辑处理，避免反斜杠转义问题。
+- 支持四种凭证来源：`KIRO_CREDS_FILE`（JSON 凭证文件）、`REFRESH_TOKEN`（直接配置 token）、`KIRO_CLI_DB_FILE`（kiro-cli SQLite 数据库）、或 AWS SSO 凭证。
 
 ### 路由层
 

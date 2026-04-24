@@ -43,6 +43,7 @@ from kiro.streaming_core import (
     parse_kiro_stream,
     collect_stream_to_result,
     FirstTokenTimeoutError,
+    UpstreamStreamInterruptedError,
     KiroEvent,
     calculate_tokens_from_context_usage,
     stream_with_first_token_retry,
@@ -491,6 +492,25 @@ async def stream_kiro_to_anthropic(
         
     except FirstTokenTimeoutError:
         raise
+    except UpstreamStreamInterruptedError as e:
+        logger.warning(
+            f"[StreamInterrupted] Anthropic streaming: upstream closed stream "
+            f"(first_token_received={e.first_token_received}): {e}"
+        )
+        # 规范化错误消息，不暴露底层 httpx 原文
+        normalized_msg = (
+            "Upstream stream was interrupted before completion. "
+            "The upstream service may have closed the connection early. "
+            "Please retry the request."
+        )
+        yield format_sse_event("error", {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": normalized_msg
+            }
+        })
+        raise RuntimeError(normalized_msg) from e
     except GeneratorExit:
         logger.debug("Client disconnected (GeneratorExit)")
         raise

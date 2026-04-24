@@ -947,6 +947,46 @@ class TestStreamingAnthropicErrorHandling:
         print("✓ Error event yielded on exception")
     
     @pytest.mark.asyncio
+    async def test_upstream_stream_interrupted_error_normalized(self, mock_response, mock_model_cache, mock_auth_manager):
+        """
+        What it does: UpstreamStreamInterruptedError emits normalized Anthropic SSE error event.
+        Goal: Verify raw 'incomplete chunked read' text is NOT exposed to clients.
+        """
+        from kiro.streaming_core import UpstreamStreamInterruptedError
+        
+        print("Setup: Mock stream that raises UpstreamStreamInterruptedError...")
+        
+        async def mock_parse_kiro_stream(*args, **kwargs):
+            yield KiroEvent(type="content", content="partial")
+            raise UpstreamStreamInterruptedError(
+                "Upstream stream was interrupted (incomplete chunked read)",
+                first_token_received=True
+            )
+        
+        print("Action: Streaming to Anthropic format with UpstreamStreamInterruptedError...")
+        events = []
+        
+        with patch('kiro.streaming_anthropic.parse_kiro_stream', mock_parse_kiro_stream):
+            with patch('kiro.streaming_anthropic.parse_bracket_tool_calls', return_value=[]):
+                try:
+                    async for event in stream_kiro_to_anthropic(
+                        mock_response, "claude-sonnet-4", mock_model_cache, mock_auth_manager
+                    ):
+                        events.append(event)
+                except RuntimeError:
+                    pass
+        
+        print(f"Received {len(events)} events")
+        # Should have error event with normalized message
+        error_events = [e for e in events if "event: error" in e]
+        assert len(error_events) >= 1
+        error_text = error_events[0]
+        # Must not expose raw httpx message
+        assert "incomplete chunked read" not in error_text.lower()
+        assert "interrupted" in error_text.lower() or "upstream" in error_text.lower()
+        print("✓ UpstreamStreamInterruptedError converted to normalized Anthropic SSE error")
+    
+    @pytest.mark.asyncio
     async def test_closes_response_in_finally(self, mock_response, mock_model_cache, mock_auth_manager):
         """
         What it does: Closes response in finally block.

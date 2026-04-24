@@ -279,6 +279,46 @@ class TestKiroHttpClientRequestWithRetry:
         assert response.status_code == 200
     
     @pytest.mark.asyncio
+    async def test_remote_protocol_error_retries_then_succeeds_for_streaming(self, mock_auth_manager_for_http):
+        """
+        What it does: Verifies RemoteProtocolError is retried for streaming requests.
+        Purpose: Ensure incomplete chunked read failures can recover automatically.
+        """
+        print("Setup: Creating KiroHttpClient...")
+        http_client = KiroHttpClient(mock_auth_manager_for_http)
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        
+        mock_request = Mock()
+        
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.build_request = Mock(return_value=mock_request)
+        mock_client.send = AsyncMock(side_effect=[
+            httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body (incomplete chunked read)"
+            ),
+            mock_response,
+        ])
+        
+        print("Action: Executing streaming request with RemoteProtocolError...")
+        with patch('kiro.http_client.httpx.AsyncClient', return_value=mock_client):
+            with patch('kiro.http_client.get_kiro_headers', return_value={}):
+                with patch('kiro.http_client.asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+                    response = await http_client.request_with_retry(
+                        "POST",
+                        "https://api.example.com/test",
+                        {"data": "value"},
+                        stream=True
+                    )
+        
+        print("Verification: request retried and eventually succeeded...")
+        assert response.status_code == 200
+        assert mock_client.send.call_count == 2
+        mock_sleep.assert_called_once()
+    
+    @pytest.mark.asyncio
     async def test_5xx_triggers_backoff(self, mock_auth_manager_for_http):
         """
         What it does: Verifies exponential backoff on 5xx.

@@ -233,6 +233,47 @@ class TestClassifyNetworkErrorConnection:
         assert error_info.suggested_http_code == 502
 
 
+class TestClassifyNetworkErrorRemoteProtocol:
+    """Tests for remote protocol error classification."""
+    
+    def test_incomplete_chunked_read_error(self):
+        """
+        What it does: Verifies incomplete chunked read errors are classified correctly.
+        Purpose: Ensure upstream early-close errors map to INCOMPLETE_CHUNKED_READ.
+        """
+        print("Setup: Creating RemoteProtocolError with incomplete chunked read...")
+        protocol_error = httpx.RemoteProtocolError(
+            "peer closed connection without sending complete message body (incomplete chunked read)"
+        )
+        
+        print("Action: Classifying error...")
+        error_info = classify_network_error(protocol_error)
+        
+        print("Verification: Category is INCOMPLETE_CHUNKED_READ...")
+        assert error_info.category == ErrorCategory.INCOMPLETE_CHUNKED_READ
+        assert "interrupted before completion" in error_info.user_message.lower()
+        assert error_info.is_retryable is True
+        assert error_info.suggested_http_code == 502
+        assert "peer closed connection" in error_info.technical_details.lower()
+    
+    def test_generic_remote_protocol_error(self):
+        """
+        What it does: Verifies generic remote protocol errors are classified correctly.
+        Purpose: Ensure non-chunked protocol failures map to REMOTE_PROTOCOL.
+        """
+        print("Setup: Creating generic RemoteProtocolError...")
+        protocol_error = httpx.RemoteProtocolError("server sent malformed response")
+        
+        print("Action: Classifying error...")
+        error_info = classify_network_error(protocol_error)
+        
+        print("Verification: Category is REMOTE_PROTOCOL...")
+        assert error_info.category == ErrorCategory.REMOTE_PROTOCOL
+        assert "protocol" in error_info.user_message.lower() or "upstream" in error_info.user_message.lower()
+        assert error_info.is_retryable is True
+        assert error_info.suggested_http_code == 502
+
+
 class TestClassifyNetworkErrorTimeout:
     """Tests for timeout error classification."""
     

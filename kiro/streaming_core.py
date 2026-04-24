@@ -111,6 +111,14 @@ class FirstTokenTimeoutError(Exception):
     pass
 
 
+class UpstreamStreamInterruptedError(Exception):
+    """Exception raised when upstream closes a stream before completion."""
+
+    def __init__(self, message: str, first_token_received: bool):
+        super().__init__(message)
+        self.first_token_received = first_token_received
+
+
 # ==================================================================================================
 # Kiro Stream Parsing
 # ==================================================================================================
@@ -165,6 +173,17 @@ async def parse_kiro_stream(
             # Empty response - this is normal, just finish
             logger.debug("Empty response from Kiro API")
             return
+        except httpx.RemoteProtocolError as e:
+            # 首 token 前断流：上游还没开始真正响应就断了，可由上层决定是否重试
+            error_msg = str(e) if str(e) else repr(e)
+            logger.warning(
+                f"[StreamInterrupted] Upstream closed connection before first token "
+                f"(RemoteProtocolError, first_token_received=False): {error_msg}"
+            )
+            raise UpstreamStreamInterruptedError(
+                f"Upstream stream interrupted before first token: {error_msg}",
+                first_token_received=False,
+            )
         
         # Process first chunk
         if debug_logger:
@@ -176,12 +195,25 @@ async def parse_kiro_stream(
             yield event
         
         # Continue reading remaining chunks
-        async for chunk in byte_iterator:
-            if debug_logger:
-                debug_logger.log_raw_chunk(chunk)
-            
-            async for event in _process_chunk(parser, chunk, thinking_parser):
-                yield event
+        try:
+            async for chunk in byte_iterator:
+                if debug_logger:
+                    debug_logger.log_raw_chunk(chunk)
+
+                async for event in _process_chunk(parser, chunk, thinking_parser):
+                    yield event
+        except httpx.RemoteProtocolError as e:
+            # 首 token 后断流：内容已经开始产出，不做整请求重试（风险大），
+            # 包装成统一的 UpstreamStreamInterruptedError 供协议层转为友好错误。
+            error_msg = str(e) if str(e) else repr(e)
+            logger.warning(
+                f"[StreamInterrupted] Upstream closed connection mid-stream "
+                f"(RemoteProtocolError, first_token_received={first_token_received}): {error_msg}"
+            )
+            raise UpstreamStreamInterruptedError(
+                f"Upstream stream interrupted after first token: {error_msg}",
+                first_token_received=True,
+            )
         
         # Finalize thinking parser and yield any remaining content
         if thinking_parser:
@@ -216,6 +248,8 @@ async def parse_kiro_stream(
             yield KiroEvent(type="tool_use", tool_use=tc)
             
     except FirstTokenTimeoutError:
+        raise
+    except UpstreamStreamInterruptedError:
         raise
     except GeneratorExit:
         logger.debug("Client disconnected (GeneratorExit)")

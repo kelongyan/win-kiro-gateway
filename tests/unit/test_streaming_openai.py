@@ -1232,6 +1232,41 @@ class TestStreamingOpenaiErrorHandling:
         print(f"Caught exception: {exc_info.value}")
         assert "Original error" in str(exc_info.value)
         print("✓ Original error not masked by aclose error")
+    
+    @pytest.mark.asyncio
+    async def test_upstream_stream_interrupted_error_normalized(self, mock_http_client, mock_response, mock_model_cache, mock_auth_manager):
+        """
+        What it does: UpstreamStreamInterruptedError is converted to a normalized RuntimeError.
+        Goal: Verify that raw 'incomplete chunked read' text is NOT exposed to clients.
+        """
+        from kiro.streaming_core import UpstreamStreamInterruptedError
+        
+        print("Setup: Mock stream that raises UpstreamStreamInterruptedError...")
+        
+        async def mock_parse_kiro_stream(*args, **kwargs):
+            yield KiroEvent(type="content", content="partial")
+            raise UpstreamStreamInterruptedError(
+                "Upstream stream was interrupted (incomplete chunked read)",
+                first_token_received=True
+            )
+        
+        print("Action: Streaming to OpenAI format with UpstreamStreamInterruptedError...")
+        
+        with patch('kiro.streaming_openai.parse_kiro_stream', mock_parse_kiro_stream):
+            with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
+                with pytest.raises(RuntimeError) as exc_info:
+                    async for chunk in stream_kiro_to_openai(
+                        mock_http_client, mock_response, "claude-sonnet-4",
+                        mock_model_cache, mock_auth_manager
+                    ):
+                        pass
+        
+        error_msg = str(exc_info.value)
+        print(f"Caught exception: {error_msg}")
+        # Must contain normalized message - NOT raw httpx text
+        assert "incomplete chunked read" not in error_msg.lower()
+        assert "interrupted" in error_msg.lower() or "upstream" in error_msg.lower()
+        print("✓ UpstreamStreamInterruptedError converted to normalized RuntimeError")
 
 
 # ==================================================================================================

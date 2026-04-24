@@ -25,6 +25,7 @@ Handles:
 - 429: exponential backoff
 - 5xx: exponential backoff
 - Timeouts: exponential backoff
+- RemoteProtocolError / incomplete chunked read: retryable with backoff
 
 Supports both per-request clients and shared application-level client
 with connection pooling for better resource management.
@@ -313,6 +314,28 @@ class KiroHttpClient:
                     if not error_info.is_retryable:
                         break  # Don't retry non-retryable errors
                 
+            except httpx.RemoteProtocolError as e:
+                # 上游过早断流（incomplete chunked read / peer closed connection）
+                # 属于可重试的传输层错误，但要和普通 RequestError 分开记录，方便排查。
+                last_error = e
+                error_info = classify_network_error(e)
+                last_error_info = error_info
+                short_msg = get_short_error_message(error_info)
+
+                if error_info.is_retryable and attempt < max_retries - 1:
+                    delay = self._calculate_retry_delay(attempt)
+                    logger.warning(
+                        f"{short_msg} - stream={stream}, attempt {attempt + 1}/{max_retries}, "
+                        f"waiting {delay}s | technical: {error_info.technical_details}"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"{short_msg} - no more retries (attempt {attempt + 1}/{max_retries}) | "
+                        f"technical: {error_info.technical_details}"
+                    )
+                    break
+
             except httpx.RequestError as e:
                 last_error = e
                 

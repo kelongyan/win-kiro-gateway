@@ -127,8 +127,25 @@ async def parse_upstream_error(response: httpx.Response) -> UpstreamErrorResult:
     """
     try:
         error_content = await response.aread()
-    except Exception:
-        error_content = b"Unknown error"
+    except httpx.RemoteProtocolError as e:
+        # 读取错误体时上游断流，提供有意义的保底信息，不要只报 Unknown error
+        error_msg = str(e) if str(e) else repr(e)
+        logger.warning(
+            f"Upstream returned non-200 but error body was truncated "
+            f"(RemoteProtocolError while reading body): {error_msg}"
+        )
+        error_content = (
+            f"Upstream returned status {response.status_code}, but the error body was "
+            f"interrupted during transmission (incomplete chunked read). "
+            f"Technical detail: {error_msg}"
+        ).encode("utf-8")
+    except Exception as e:
+        error_msg = str(e) if str(e) else repr(e)
+        logger.warning(f"Failed to read upstream error body: {error_msg}")
+        error_content = (
+            f"Upstream returned status {response.status_code}, but the error body "
+            f"could not be read. Technical detail: {error_msg}"
+        ).encode("utf-8")
 
     error_text = error_content.decode("utf-8", errors="replace")
     error_message = error_text

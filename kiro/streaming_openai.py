@@ -49,6 +49,7 @@ from kiro.tokenizer import count_tokens, count_message_tokens, count_tools_token
 from kiro.streaming_core import (
     parse_kiro_stream,
     FirstTokenTimeoutError,
+    UpstreamStreamInterruptedError,
     KiroEvent,
     calculate_tokens_from_context_usage,
     stream_with_first_token_retry as stream_with_first_token_retry_core,
@@ -316,6 +317,18 @@ async def stream_kiro_to_openai_internal(
     except FirstTokenTimeoutError:
         # Propagate timeout up for retry
         raise
+    except UpstreamStreamInterruptedError as e:
+        streaming_error_occurred = True
+        logger.warning(
+            f"[StreamInterrupted] OpenAI streaming: upstream closed stream "
+            f"(first_token_received={e.first_token_received}): {e}"
+        )
+        # 不把底层 httpx 原文 (incomplete chunked read) 直接抛给客户端
+        raise RuntimeError(
+            "Upstream stream was interrupted before completion. "
+            "The upstream service may have closed the connection early. "
+            "Please retry the request."
+        ) from e
     except GeneratorExit:
         # Client disconnected - this is normal, don't log as error
         logger.debug("Client disconnected (GeneratorExit)")

@@ -22,6 +22,7 @@ from kiro.streaming_core import (
     KiroEvent,
     StreamResult,
     FirstTokenTimeoutError,
+    UpstreamStreamInterruptedError,
     parse_kiro_stream,
     collect_stream_to_result,
     calculate_tokens_from_context_usage,
@@ -1236,6 +1237,72 @@ class TestStreamingCoreErrorHandling:
         print(f"Caught exception: {exc_info.value}")
         assert "Test error" in str(exc_info.value)
         print("✓ RuntimeError propagated correctly")
+    
+    @pytest.mark.asyncio
+    async def test_remote_protocol_error_before_first_token_raises_interrupted_error(self, mock_response, mock_parser):
+        """
+        What it does: Verifies RemoteProtocolError before first token raises UpstreamStreamInterruptedError.
+        Goal: Ensure pre-first-token protocol failures are correctly wrapped.
+        """
+        print("Setup: Mock response that raises RemoteProtocolError immediately...")
+        import httpx as httpx_module
+        
+        async def mock_aiter_bytes():
+            raise httpx_module.RemoteProtocolError(
+                "peer closed connection without sending complete message body (incomplete chunked read)"
+            )
+            yield b''  # Make it a generator
+        
+        mock_response.aiter_bytes = mock_aiter_bytes
+        
+        print("Action: Parsing stream with RemoteProtocolError before first token...")
+        
+        with patch('kiro.streaming_core.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_core.FAKE_REASONING_ENABLED', False):
+                with pytest.raises(UpstreamStreamInterruptedError) as exc_info:
+                    async for event in parse_kiro_stream(mock_response, first_token_timeout=30):
+                        pass
+        
+        print(f"Caught exception: {exc_info.value}")
+        assert exc_info.value.first_token_received is False
+        assert "interrupted" in str(exc_info.value).lower() or "stream" in str(exc_info.value).lower()
+        print("✓ UpstreamStreamInterruptedError raised with first_token_received=False")
+    
+    @pytest.mark.asyncio
+    async def test_remote_protocol_error_after_first_token_raises_interrupted_error(self, mock_response, mock_parser):
+        """
+        What it does: Verifies RemoteProtocolError after first token raises UpstreamStreamInterruptedError with first_token_received=True.
+        Goal: Ensure mid-stream protocol failures are wrapped correctly.
+        """
+        print("Setup: Mock response that yields data then raises RemoteProtocolError...")
+        import httpx as httpx_module
+        
+        call_count = 0
+        
+        async def mock_aiter_bytes():
+            nonlocal call_count
+            call_count += 1
+            yield b'first_chunk'
+            raise httpx_module.RemoteProtocolError(
+                "peer closed connection without sending complete message body (incomplete chunked read)"
+            )
+        
+        mock_response.aiter_bytes = mock_aiter_bytes
+        mock_parser.feed.return_value = [{"type": "content", "data": "Hello"}]
+        mock_parser.get_tool_calls.return_value = []
+        
+        print("Action: Parsing stream with RemoteProtocolError after first token...")
+        events = []
+        
+        with patch('kiro.streaming_core.AwsEventStreamParser', return_value=mock_parser):
+            with patch('kiro.streaming_core.FAKE_REASONING_ENABLED', False):
+                with pytest.raises(UpstreamStreamInterruptedError) as exc_info:
+                    async for event in parse_kiro_stream(mock_response, first_token_timeout=30):
+                        events.append(event)
+        
+        print(f"Caught exception: {exc_info.value}, first_token_received={exc_info.value.first_token_received}")
+        assert exc_info.value.first_token_received is True
+        print("✓ UpstreamStreamInterruptedError raised with first_token_received=True")
 
 
 # ==================================================================================================

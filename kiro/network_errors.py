@@ -55,6 +55,8 @@ class ErrorCategory(str, Enum):
     SSL_ERROR = "ssl_error"
     PROXY_ERROR = "proxy_error"
     TOO_MANY_REDIRECTS = "too_many_redirects"
+    REMOTE_PROTOCOL = "remote_protocol"
+    INCOMPLETE_CHUNKED_READ = "incomplete_chunked_read"
     UNKNOWN = "unknown"
 
 
@@ -113,6 +115,10 @@ def classify_network_error(error: Exception) -> NetworkErrorInfo:
     # Analyze httpx.TimeoutException (various timeout types)
     if isinstance(error, httpx.TimeoutException):
         return _classify_timeout_error(error, technical_details)
+
+    # Analyze httpx.RemoteProtocolError / truncated chunked responses
+    if isinstance(error, httpx.RemoteProtocolError):
+        return _classify_remote_protocol_error(error, technical_details)
     
     # Analyze httpx.TooManyRedirects
     if isinstance(error, httpx.TooManyRedirects):
@@ -294,6 +300,56 @@ def _classify_connect_error(error: httpx.ConnectError, technical_details: str) -
         is_retryable=True,
         suggested_http_code=502
     )
+
+
+def _classify_remote_protocol_error(error: httpx.RemoteProtocolError, technical_details: str) -> NetworkErrorInfo:
+    """
+    Classifies httpx.RemoteProtocolError into specific subcategories.
+
+    Args:
+        error: The RemoteProtocolError exception
+        technical_details: Technical error string for logging
+
+    Returns:
+        NetworkErrorInfo with protocol/interrupted-stream classification
+    """
+    error_str = str(error)
+    error_str_lower = error_str.lower()
+
+    if (
+        "incomplete chunked read" in error_str_lower
+        or "peer closed connection" in error_str_lower
+        or "server disconnected without sending a response" in error_str_lower
+        or "incomplete message body" in error_str_lower
+    ):
+        return NetworkErrorInfo(
+            category=ErrorCategory.INCOMPLETE_CHUNKED_READ,
+            user_message="Upstream stream was interrupted before completion.",
+            troubleshooting_steps=[
+                "The upstream service may have closed the response too early",
+                "Check whether VPN/proxy software is interfering with streaming responses",
+                "Retry the request to see if this was a transient upstream interruption",
+                "If the problem is persistent, inspect gateway logs for the exact upstream failure point"
+            ],
+            technical_details=technical_details,
+            is_retryable=True,
+            suggested_http_code=502
+        )
+
+    return NetworkErrorInfo(
+        category=ErrorCategory.REMOTE_PROTOCOL,
+        user_message="Upstream protocol error - the server sent an invalid or interrupted response.",
+        troubleshooting_steps=[
+            "Retry the request in case this was a transient upstream issue",
+            "Check whether VPN/proxy software is altering or truncating HTTP responses",
+            "Inspect debug logs for the exact upstream error details",
+            "If it persists, verify the upstream service is stable"
+        ],
+        technical_details=technical_details,
+        is_retryable=True,
+        suggested_http_code=502
+    )
+
 
 
 def _classify_timeout_error(error: httpx.TimeoutException, technical_details: str) -> NetworkErrorInfo:

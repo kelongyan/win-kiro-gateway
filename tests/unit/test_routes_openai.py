@@ -268,6 +268,14 @@ class TestHealthEndpoint:
             "requests_total": 12,
             "errors_total": 2,
             "cached_responses": 0,
+            "errors_by_type": {
+                "auth": 1,
+                "rate_limit": 1,
+                "timeout": 0,
+                "upstream": 0,
+                "validation": 0,
+                "internal": 0,
+            },
         }
         test_client.app.state.request_limiter_limit = 20
         test_client.app.state.request_queue_timeout = 5.0
@@ -286,14 +294,18 @@ class TestHealthEndpoint:
         assert result["uptime_seconds"] == 60
         assert result["requests_total"] == 12
         assert result["errors_total"] == 2
+        assert result["errors_by_type"]["auth"] == 1
+        assert result["errors_by_type"]["rate_limit"] == 1
         assert result["debug_mode"] in ("off", "errors", "all")
         assert result["auth"]["initialized"] is True
+        assert "refresh_failures" in result["auth"]
         assert result["models"]["initialized"] is True
         assert result["models"]["count"] >= 0
         assert result["request_limiter"]["enabled"] is True
         assert result["request_limiter"]["limit"] == 20
         assert result["request_limiter"]["available_slots"] == 7
         assert result["request_limiter"]["queue_timeout_seconds"] == 5.0
+        assert result["http_client"]["max_connections"] >= 1
 
 
 # =============================================================================

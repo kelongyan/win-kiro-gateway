@@ -47,6 +47,7 @@ import sys
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -77,8 +78,19 @@ SERVER_PORT = config_module.SERVER_PORT
 DEFAULT_SERVER_HOST = config_module.DEFAULT_SERVER_HOST
 DEFAULT_SERVER_PORT = config_module.DEFAULT_SERVER_PORT
 STREAMING_READ_TIMEOUT = config_module.STREAMING_READ_TIMEOUT
+HTTP_MAX_CONNECTIONS = config_module.HTTP_MAX_CONNECTIONS
+HTTP_MAX_KEEPALIVE_CONNECTIONS = config_module.HTTP_MAX_KEEPALIVE_CONNECTIONS
+HTTP_KEEPALIVE_EXPIRY = config_module.HTTP_KEEPALIVE_EXPIRY
+HTTP_CONNECT_TIMEOUT = config_module.HTTP_CONNECT_TIMEOUT
+HTTP_WRITE_TIMEOUT = config_module.HTTP_WRITE_TIMEOUT
+HTTP_POOL_TIMEOUT = config_module.HTTP_POOL_TIMEOUT
+MAX_RETRIES = config_module.MAX_RETRIES
+BASE_RETRY_DELAY = config_module.BASE_RETRY_DELAY
 MAX_CONCURRENT_REQUESTS = config_module.MAX_CONCURRENT_REQUESTS
 REQUEST_QUEUE_TIMEOUT = config_module.REQUEST_QUEUE_TIMEOUT
+TOKEN_AUTO_REFRESH_ENABLED = config_module.TOKEN_AUTO_REFRESH_ENABLED
+TOKEN_AUTO_REFRESH_CHECK_INTERVAL = config_module.TOKEN_AUTO_REFRESH_CHECK_INTERVAL
+TOKEN_AUTO_REFRESH_WINDOW = config_module.TOKEN_AUTO_REFRESH_WINDOW
 HIDDEN_MODELS = config_module.HIDDEN_MODELS
 MODEL_ALIASES = config_module.MODEL_ALIASES
 HIDDEN_FROM_LIST = config_module.HIDDEN_FROM_LIST
@@ -94,6 +106,47 @@ from kiro.routes_openai import router as openai_router
 from kiro.routes_anthropic import router as anthropic_router
 from kiro.exceptions import validation_exception_handler
 from kiro.debug_middleware import DebugLoggerMiddleware
+
+
+def _create_health_counters() -> dict:
+    return {
+        "requests_total": 0,
+        "errors_total": 0,
+        "cached_responses": 0,
+        "errors_by_type": {
+            "auth": 0,
+            "rate_limit": 0,
+            "timeout": 0,
+            "upstream": 0,
+            "validation": 0,
+            "internal": 0,
+        },
+    }
+
+
+async def token_refresh_loop(app: FastAPI) -> None:
+    while True:
+        try:
+            await asyncio.sleep(TOKEN_AUTO_REFRESH_CHECK_INTERVAL)
+            auth_manager = getattr(app.state, "auth_manager", None)
+            if auth_manager is None or not getattr(auth_manager, "_access_token", None):
+                continue
+
+            expires_at = getattr(auth_manager, "_expires_at", None)
+            if expires_at is None:
+                continue
+
+            expires_in_seconds = (expires_at - datetime.now(timezone.utc)).total_seconds()
+            if expires_in_seconds <= TOKEN_AUTO_REFRESH_WINDOW:
+                logger.info(
+                    f"Token expires in {int(expires_in_seconds)}s; triggering proactive refresh"
+                )
+                await auth_manager.force_refresh()
+        except asyncio.CancelledError:
+            logger.debug("Background token refresh loop cancelled")
+            raise
+        except Exception as e:
+            logger.warning(f"Background token refresh loop failed: {e}")
 
 
 # --- Loguru Configuration ---
@@ -343,16 +396,16 @@ async def lifespan(app: FastAPI):
     # This reduces memory usage and enables connection reuse across requests
     # Limits: max 100 total connections, max 20 keep-alive connections
     limits = httpx.Limits(
-        max_connections=100,
-        max_keepalive_connections=20,
-        keepalive_expiry=30.0  # Close idle connections after 30 seconds
+        max_connections=HTTP_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=HTTP_KEEPALIVE_EXPIRY
     )
     # Timeout configuration for streaming (long read timeout for model "thinking")
     timeout = httpx.Timeout(
-        connect=30.0,
+        connect=HTTP_CONNECT_TIMEOUT,
         read=STREAMING_READ_TIMEOUT,  # 300 seconds for streaming
-        write=30.0,
-        pool=30.0
+        write=HTTP_WRITE_TIMEOUT,
+        pool=HTTP_POOL_TIMEOUT
     )
     app.state.http_client = httpx.AsyncClient(
         limits=limits,
@@ -360,10 +413,21 @@ async def lifespan(app: FastAPI):
         follow_redirects=True
     )
     app.state.started_at = time.time()
-    app.state.health_counters = {
-        "requests_total": 0,
-        "errors_total": 0,
-        "cached_responses": 0,
+    app.state.health_counters = _create_health_counters()
+    app.state.http_client_config = {
+        "max_connections": HTTP_MAX_CONNECTIONS,
+        "max_keepalive_connections": HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        "keepalive_expiry_seconds": HTTP_KEEPALIVE_EXPIRY,
+        "timeouts": {
+            "connect": HTTP_CONNECT_TIMEOUT,
+            "read": STREAMING_READ_TIMEOUT,
+            "write": HTTP_WRITE_TIMEOUT,
+            "pool": HTTP_POOL_TIMEOUT,
+        },
+        "retry": {
+            "max_retries": MAX_RETRIES,
+            "base_retry_delay": BASE_RETRY_DELAY,
+        },
     }
     logger.info("Shared HTTP client created with connection pooling")
 
@@ -384,6 +448,7 @@ async def lifespan(app: FastAPI):
         creds_file=KIRO_CREDS_FILE if KIRO_CREDS_FILE else None,
         sqlite_db=KIRO_CLI_DB_FILE if KIRO_CLI_DB_FILE else None,
     )
+    app.state.token_refresh_task = None
     
     # Create model cache
     app.state.model_cache = ModelInfoCache()
@@ -455,11 +520,25 @@ async def lifespan(app: FastAPI):
         logger.debug(f"Model aliases configured: {list(MODEL_ALIASES.keys())}")
     if HIDDEN_FROM_LIST:
         logger.debug(f"Models hidden from list: {HIDDEN_FROM_LIST}")
-    
+
+    if TOKEN_AUTO_REFRESH_ENABLED:
+        app.state.token_refresh_task = asyncio.create_task(token_refresh_loop(app))
+        logger.info(
+            f"Background token refresh enabled: interval={TOKEN_AUTO_REFRESH_CHECK_INTERVAL}s, "
+            f"window={TOKEN_AUTO_REFRESH_WINDOW}s"
+        )
+
     yield
     
     # Graceful shutdown
     logger.info("Shutting down application...")
+    token_refresh_task = getattr(app.state, "token_refresh_task", None)
+    if token_refresh_task is not None:
+        token_refresh_task.cancel()
+        try:
+            await token_refresh_task
+        except asyncio.CancelledError:
+            pass
     try:
         await app.state.http_client.aclose()
         logger.info("Shared HTTP client closed")

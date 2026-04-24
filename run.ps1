@@ -1,17 +1,17 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Kiro Gateway V2 - 增强版管理脚本，支持自动重载。
+    Kiro Gateway - 增强版管理脚本，支持自动重载。
 .DESCRIPTION
     检测账号变化，自动重载凭证，管理网关生命周期。
 
-    V2 新功能:
+    主要功能:
     - 自动监控凭证文件
     - 检测到账号切换时自动重启
     - 后台凭证监控
     - 账号变化通知
 .EXAMPLE
-    .\kiro-gateway-v2.ps1
+    .\run.ps1
 #>
 
 $ErrorActionPreference = "Continue"
@@ -20,19 +20,19 @@ $Script:GatewayDir = $PSScriptRoot
 $Script:EnvFile = Join-Path $Script:GatewayDir ".env"
 $Script:CredsFile = Join-Path $env:USERPROFILE ".aws\sso\cache\kiro-auth-token.json"
 $Script:RuntimeDir = Join-Path $Script:GatewayDir ".runtime"
-$Script:PidFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.pid"
-$Script:StateFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.state"
-$Script:OutLogFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.out.log"
-$Script:ErrLogFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.err.log"
-$Script:WatcherJobName = "KiroGatewayV2-CredWatcher"
+$Script:PidFile = Join-Path $Script:RuntimeDir "run.pid"
+$Script:StateFile = Join-Path $Script:RuntimeDir "run.state"
+$Script:OutLogFile = Join-Path $Script:RuntimeDir "run.out.log"
+$Script:ErrLogFile = Join-Path $Script:RuntimeDir "run.err.log"
+$Script:WatcherJobName = "KiroGateway-CredWatcher"
 $Script:HealthCheckFailures = 0
-$Script:HealthCheckFailureThreshold = 3
+$Script:HealthCheckFailureThreshold = 5
 $Script:LogRotateMaxSizeMB = 5
 $Script:LogRotateKeepCount = 5
 $Script:GatewayPort = 8000
 $Script:ApiKey = ""
 $Script:AutoReloadEnabled = $true
-$Script:CheckIntervalSeconds = 5
+$Script:CheckIntervalSeconds = 10
 
 function Ensure-RuntimeDirectory {
     # 所有运行期文件统一收口到 .runtime 目录，避免污染仓库根目录。
@@ -627,7 +627,18 @@ function Invoke-ManagedGatewayHealthCheck {
     }
 
     $Script:HealthCheckFailures += 1
-    Write-StateLog "健康检查失败 #$($Script:HealthCheckFailures)。"
+    $failureReason = "health endpoint unavailable"
+    if ($null -ne $health) {
+        if ($health.auth) {
+            $failureReason = "status=$($health.status); auth_expired=$($health.auth.expired); expiring_soon=$($health.auth.expiring_soon); refresh_failures=$($health.auth.refresh_failures)"
+            if ($health.auth.last_refresh_error_message) {
+                $failureReason += "; refresh_error=$($health.auth.last_refresh_error_message)"
+            }
+        } else {
+            $failureReason = "status=$($health.status)"
+        }
+    }
+    Write-StateLog "健康检查失败 #$($Script:HealthCheckFailures)：$failureReason"
 
     if ($Script:HealthCheckFailures -lt $Script:HealthCheckFailureThreshold) {
         return
@@ -748,7 +759,7 @@ function Start-Gateway {
             if ($startupResult.ProcessId) {
                 Write-Host "进程 PID: $($startupResult.ProcessId)" -ForegroundColor Gray
             }
-            Write-Host "日志: .runtime/kiro-gateway-v2.out.log / .runtime/kiro-gateway-v2.err.log" -ForegroundColor Gray
+            Write-Host "日志: .runtime/run.out.log / .runtime/run.err.log" -ForegroundColor Gray
 
             if ($Script:AutoReloadEnabled) {
                 Write-Host ""
@@ -784,6 +795,23 @@ function Test-API {
         }
         if ($null -ne $health.auth) {
             Write-Host "认证状态: initialized=$($health.auth.initialized), type=$($health.auth.type), region=$($health.auth.region)" -ForegroundColor Gray
+            Write-Host "Token 状态: expired=$($health.auth.expired), expiring_soon=$($health.auth.expiring_soon), refresh_failures=$($health.auth.refresh_failures)" -ForegroundColor Gray
+            if ($health.auth.expires_in_seconds -ne $null) {
+                Write-Host "Token 剩余有效期: $($health.auth.expires_in_seconds)s" -ForegroundColor Gray
+            }
+            if ($health.auth.last_refresh_at) {
+                Write-Host "最近刷新时间: $($health.auth.last_refresh_at)" -ForegroundColor Gray
+            }
+            if ($health.auth.last_refresh_error_at) {
+                Write-Host "最近刷新失败: $($health.auth.last_refresh_at) | $($health.auth.last_refresh_error_message)" -ForegroundColor DarkYellow
+            }
+        }
+        if ($null -ne $health.errors_by_type) {
+            Write-Host "错误分类: auth=$($health.errors_by_type.auth), rate_limit=$($health.errors_by_type.rate_limit), timeout=$($health.errors_by_type.timeout), upstream=$($health.errors_by_type.upstream), validation=$($health.errors_by_type.validation), internal=$($health.errors_by_type.internal)" -ForegroundColor Gray
+        }
+        if ($null -ne $health.http_client) {
+            Write-Host "连接池: max=$($health.http_client.max_connections), keepalive=$($health.http_client.max_keepalive_connections), expiry=$($health.http_client.keepalive_expiry_seconds)s" -ForegroundColor Gray
+            Write-Host "超时: connect=$($health.http_client.timeouts.connect)s, read=$($health.http_client.timeouts.read)s, write=$($health.http_client.timeouts.write)s, pool=$($health.http_client.timeouts.pool)s" -ForegroundColor Gray
         }
     } catch {
         Write-Host "健康检查失败。网关是否正在运行？" -ForegroundColor Red

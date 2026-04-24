@@ -265,18 +265,27 @@ KIRO_Q_HOST_TEMPLATE: str = "https://q.{region}.amazonaws.com"
 
 # Time before token expiration when refresh is needed (in seconds)
 # Default 10 minutes - refresh token in advance to avoid errors
-TOKEN_REFRESH_THRESHOLD: int = 600
+TOKEN_REFRESH_THRESHOLD: int = _parse_positive_int_env("TOKEN_REFRESH_THRESHOLD", 600)
+
+# Enable background proactive token refresh task.
+TOKEN_AUTO_REFRESH_ENABLED: bool = os.getenv("TOKEN_AUTO_REFRESH_ENABLED", "true").lower() in ("true", "1", "yes")
+
+# How often the background task checks token state (seconds).
+TOKEN_AUTO_REFRESH_CHECK_INTERVAL: int = _parse_positive_int_env("TOKEN_AUTO_REFRESH_CHECK_INTERVAL", 300)
+
+# Refresh proactively when token expires within this window (seconds).
+TOKEN_AUTO_REFRESH_WINDOW: int = _parse_positive_int_env("TOKEN_AUTO_REFRESH_WINDOW", 300)
 
 # ==================================================================================================
 # Retry Configuration
 # ==================================================================================================
 
 # Maximum number of retry attempts on errors
-MAX_RETRIES: int = 3
+MAX_RETRIES: int = _parse_positive_int_env("MAX_RETRIES", 3)
 
 # Base delay between attempts (seconds)
 # Uses exponential backoff: delay * (2 ** attempt)
-BASE_RETRY_DELAY: float = 1.0
+BASE_RETRY_DELAY: float = _parse_positive_float_env("BASE_RETRY_DELAY", 1.0)
 
 # ==================================================================================================
 # Hidden Models Configuration
@@ -433,6 +442,14 @@ FIRST_TOKEN_TIMEOUT: float = float(os.getenv("FIRST_TOKEN_TIMEOUT", "15"))
 # while "thinking" (especially for tool calls or complex reasoning).
 # Default: 300 seconds (5 minutes) - generous timeout to avoid premature disconnects.
 STREAMING_READ_TIMEOUT: float = float(os.getenv("STREAMING_READ_TIMEOUT", "300"))
+
+# Shared HTTP client pool settings.
+HTTP_MAX_CONNECTIONS: int = _parse_positive_int_env("HTTP_MAX_CONNECTIONS", 100)
+HTTP_MAX_KEEPALIVE_CONNECTIONS: int = _parse_positive_int_env("HTTP_MAX_KEEPALIVE_CONNECTIONS", 20)
+HTTP_KEEPALIVE_EXPIRY: float = _parse_positive_float_env("HTTP_KEEPALIVE_EXPIRY", 30.0)
+HTTP_CONNECT_TIMEOUT: float = _parse_positive_float_env("HTTP_CONNECT_TIMEOUT", 30.0)
+HTTP_WRITE_TIMEOUT: float = _parse_positive_float_env("HTTP_WRITE_TIMEOUT", 30.0)
+HTTP_POOL_TIMEOUT: float = _parse_positive_float_env("HTTP_POOL_TIMEOUT", 30.0)
 
 # Maximum number of attempts on first token timeout.
 # After exhausting all attempts, an error will be returned.

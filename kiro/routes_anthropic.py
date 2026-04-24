@@ -67,6 +67,15 @@ except ImportError:
     debug_logger = None
 
 
+def _increment_error_counter(health_counters: Optional[dict], error_type: str) -> None:
+    if not isinstance(health_counters, dict):
+        return
+
+    health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+    errors_by_type = health_counters.setdefault("errors_by_type", {})
+    errors_by_type[error_type] = errors_by_type.get(error_type, 0) + 1
+
+
 # --- Security scheme ---
 # Anthropic uses x-api-key header instead of Authorization: Bearer
 anthropic_api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
@@ -431,8 +440,7 @@ async def messages(
         logger.warning(f"HTTP 429 - POST /v1/messages - {e}")
         if debug_logger:
             debug_logger.flush_on_error(429, str(e))
-        if isinstance(health_counters, dict):
-            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        _increment_error_counter(health_counters, "rate_limit")
         return JSONResponse(
             status_code=429,
             content={
@@ -447,8 +455,16 @@ async def messages(
         await close_route_http_client(http_client)
         release_request_slot(request.app.state, limiter_acquired)
         logger.error(f"HTTP {e.status_code} - POST /v1/messages - {e.detail}")
-        if isinstance(health_counters, dict):
-            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        if e.status_code == 401:
+            _increment_error_counter(health_counters, "auth")
+        elif e.status_code == 429:
+            _increment_error_counter(health_counters, "rate_limit")
+        elif e.status_code == 504:
+            _increment_error_counter(health_counters, "timeout")
+        elif 500 <= e.status_code < 600:
+            _increment_error_counter(health_counters, "upstream")
+        else:
+            _increment_error_counter(health_counters, "internal")
         if debug_logger:
             debug_logger.flush_on_error(e.status_code, str(e.detail))
         raise
@@ -456,8 +472,7 @@ async def messages(
         await close_route_http_client(http_client)
         release_request_slot(request.app.state, limiter_acquired)
         logger.error(f"Internal error: {e}", exc_info=True)
-        if isinstance(health_counters, dict):
-            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        _increment_error_counter(health_counters, "internal")
         logger.error(f"HTTP 500 - POST /v1/messages - {str(e)[:100]}")
         if debug_logger:
             debug_logger.flush_on_error(500, str(e))

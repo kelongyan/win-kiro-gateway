@@ -28,6 +28,7 @@ os.environ.setdefault("PROFILE_ARN", "arn:aws:codewhisperer:us-east-1:123456789:
 os.environ.setdefault("KIRO_REGION", "us-east-1")
 os.environ.setdefault("UPSTREAM_PROVIDER", "kiro")
 os.environ.setdefault("VPN_PROXY_URL", "")
+os.environ.setdefault("TOKEN_AUTO_REFRESH_ENABLED", "false")
 
 
 # =============================================================================
@@ -61,6 +62,7 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("PROXY_API_KEY", "test_proxy_key_12345")
     monkeypatch.setenv("PROFILE_ARN", "arn:aws:codewhisperer:us-east-1:123456789:profile/test")
     monkeypatch.setenv("KIRO_REGION", "us-east-1")
+    monkeypatch.setenv("TOKEN_AUTO_REFRESH_ENABLED", "false")
     return {
         "REFRESH_TOKEN": "test_refresh_token_abcdef",
         "PROXY_API_KEY": "test_proxy_key_12345",

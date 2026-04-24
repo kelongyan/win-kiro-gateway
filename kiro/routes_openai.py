@@ -29,6 +29,7 @@ Contains all API endpoints:
 import json
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -66,6 +67,15 @@ try:
     from kiro.debug_logger import debug_logger
 except ImportError:
     debug_logger = None
+
+
+def _increment_error_counter(health_counters: Optional[dict], error_type: str) -> None:
+    if not isinstance(health_counters, dict):
+        return
+
+    health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+    errors_by_type = health_counters.setdefault("errors_by_type", {})
+    errors_by_type[error_type] = errors_by_type.get(error_type, 0) + 1
 
 
 # --- Security scheme ---
@@ -150,6 +160,17 @@ async def health(request: Request):
     if started_at is not None:
         uptime_seconds = max(0, int(time.time() - started_at))
 
+    auth_snapshot = {
+        "initialized": auth_manager is not None,
+        "type": auth_type,
+        "region": region,
+        "api_host": api_host,
+    }
+    if auth_manager is not None and hasattr(auth_manager, "get_health_snapshot"):
+        auth_snapshot = auth_manager.get_health_snapshot()
+
+    http_client_config = getattr(request.app.state, "http_client_config", None)
+
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -157,14 +178,10 @@ async def health(request: Request):
         "uptime_seconds": uptime_seconds,
         "requests_total": health_counters.get("requests_total", 0),
         "errors_total": health_counters.get("errors_total", 0),
+        "errors_by_type": health_counters.get("errors_by_type", {}),
         "cached_responses": health_counters.get("cached_responses", 0),
         "debug_mode": DEBUG_MODE,
-        "auth": {
-            "initialized": auth_manager is not None,
-            "type": auth_type,
-            "region": region,
-            "api_host": api_host,
-        },
+        "auth": auth_snapshot,
         "models": {
             "initialized": model_cache is not None,
             "count": model_count,
@@ -176,6 +193,7 @@ async def health(request: Request):
             "available_slots": available_slots,
             "queue_timeout_seconds": getattr(request.app.state, "request_queue_timeout", None),
         },
+        "http_client": http_client_config,
     }
 
 @router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)])
@@ -463,8 +481,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         logger.warning(f"HTTP 429 - POST /v1/chat/completions - {e}")
         if debug_logger:
             debug_logger.flush_on_error(429, str(e))
-        if isinstance(health_counters, dict):
-            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        _increment_error_counter(health_counters, "rate_limit")
         return JSONResponse(
             status_code=429,
             content={
@@ -480,8 +497,16 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         release_request_slot(request.app.state, limiter_acquired)
         # Log access log for HTTP error
         logger.error(f"HTTP {e.status_code} - POST /v1/chat/completions - {e.detail}")
-        if isinstance(health_counters, dict):
-            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        if e.status_code == 401:
+            _increment_error_counter(health_counters, "auth")
+        elif e.status_code == 429:
+            _increment_error_counter(health_counters, "rate_limit")
+        elif e.status_code == 504:
+            _increment_error_counter(health_counters, "timeout")
+        elif 500 <= e.status_code < 600:
+            _increment_error_counter(health_counters, "upstream")
+        else:
+            _increment_error_counter(health_counters, "internal")
         # Flush debug logs on HTTP error ("errors" mode)
         if debug_logger:
             debug_logger.flush_on_error(e.status_code, str(e.detail))
@@ -490,8 +515,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         await close_route_http_client(http_client)
         release_request_slot(request.app.state, limiter_acquired)
         logger.error(f"Internal error: {e}", exc_info=True)
-        if isinstance(health_counters, dict):
-            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        _increment_error_counter(health_counters, "internal")
         # Log access log for internal error
         logger.error(f"HTTP 500 - POST /v1/chat/completions - {str(e)[:100]}")
         # Flush debug logs on internal error ("errors" mode)

@@ -164,6 +164,10 @@ class KiroAuthManager:
         
         self._access_token: Optional[str] = None
         self._expires_at: Optional[datetime] = None
+        self._last_refresh_at: Optional[datetime] = None
+        self._last_refresh_error_at: Optional[datetime] = None
+        self._last_refresh_error_message: Optional[str] = None
+        self._refresh_failures: int = 0
         self._lock = asyncio.Lock()
         
         # Auth type will be determined after loading credentials
@@ -190,6 +194,43 @@ class KiroAuthManager:
         # Determine auth type based on available credentials
         self._detect_auth_type()
     
+    def _mark_refresh_success(self) -> None:
+        """记录一次成功的 token 刷新。"""
+        self._last_refresh_at = datetime.now(timezone.utc)
+        self._last_refresh_error_at = None
+        self._last_refresh_error_message = None
+        self._refresh_failures = 0
+
+    def _mark_refresh_failure(self, error: Exception) -> None:
+        """记录一次失败的 token 刷新。"""
+        self._last_refresh_error_at = datetime.now(timezone.utc)
+        self._last_refresh_error_message = str(error)
+        self._refresh_failures += 1
+
+    def get_health_snapshot(self) -> dict:
+        """返回认证状态的只读快照，用于 /health。"""
+        now = datetime.now(timezone.utc)
+        expires_in_seconds = None
+        expires_at = None
+        if self._expires_at is not None:
+            expires_at = self._expires_at.isoformat()
+            expires_in_seconds = int((self._expires_at - now).total_seconds())
+
+        return {
+            "initialized": True,
+            "type": self._auth_type.value if self._auth_type is not None else None,
+            "region": self._region,
+            "api_host": self._api_host,
+            "expires_at": expires_at,
+            "expires_in_seconds": expires_in_seconds,
+            "expiring_soon": self.is_token_expiring_soon(),
+            "expired": self.is_token_expired(),
+            "last_refresh_at": self._last_refresh_at.isoformat() if self._last_refresh_at else None,
+            "last_refresh_error_at": self._last_refresh_error_at.isoformat() if self._last_refresh_error_at else None,
+            "last_refresh_error_message": self._last_refresh_error_message,
+            "refresh_failures": self._refresh_failures,
+        }
+
     def _detect_auth_type(self) -> None:
         """
         Detects authentication type based on available credentials.
@@ -438,6 +479,7 @@ class KiroAuthManager:
             try:
                 await self._refresh_token_request()
             except httpx.HTTPStatusError as e:
+                self._mark_refresh_failure(e)
                 # Graceful degradation for SQLite mode when refresh fails twice
                 # This happens when kiro-cli refreshed tokens in memory without persisting
                 if e.response.status_code == 400 and self._sqlite_db:
@@ -459,7 +501,8 @@ class KiroAuthManager:
                         )
                 # Non-SQLite mode or non-400 error - propagate the exception
                 raise
-            except Exception:
+            except Exception as e:
+                self._mark_refresh_failure(e)
                 # For any other exception, propagate it
                 raise
             

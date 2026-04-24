@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Win Kiro Gateway 是一个本地 FastAPI 代理，将客户端的 OpenAI Chat Completions API 和 Anthropic Messages API 请求转换为 Kiro / Amazon Q Developer 上游请求，并把 Kiro 的 AWS event stream 响应再转换回对应协议格式。
 
-当前仓库主要面向 Windows + PowerShell 本地使用场景，推荐通过 `.env` 配置凭证和代理密钥，通过 `kiro-gateway-v2.ps1` 启动本地服务。
+当前仓库主要面向 Windows + PowerShell 本地使用场景，推荐通过 `.env` 配置凭证和代理密钥，通过 `run.ps1` 启动本地服务。
 
 ## 常用命令
 
@@ -22,7 +22,7 @@ python -m pip install -r requirements.txt
 
 ```powershell
 # 推荐的 Windows PowerShell 启动方式（自动管理进程、日志和状态）
-.\kiro-gateway-v2.ps1
+.\run.ps1
 
 # 直接运行应用
 python main.py
@@ -107,12 +107,14 @@ docker build -t win-kiro-gateway .
 - `load_runtime_env()` 只在应用启动阶段显式调用，避免普通模块导入和测试被本地 `.env` 污染。
 - Windows 路径相关配置（如 `KIRO_CREDS_FILE`、`KIRO_CLI_DB_FILE`）通过原始 `.env` 读取逻辑处理，避免反斜杠转义问题。
 - 支持四种凭证来源：`KIRO_CREDS_FILE`（JSON 凭证文件）、`REFRESH_TOKEN`（直接配置 token）、`KIRO_CLI_DB_FILE`（kiro-cli SQLite 数据库）、或 AWS SSO 凭证。
+- 稳定性相关参数可通过环境变量覆盖，包括主动 token 刷新（`TOKEN_AUTO_REFRESH_*`）、共享连接池（`HTTP_*`）以及重试参数（`MAX_RETRIES`、`BASE_RETRY_DELAY`）。
 
 ### 路由层
 
 - `kiro/routes_openai.py` 提供 `/`、`/health`、`/v1/models`、`/v1/chat/completions`，使用 `Authorization: Bearer <PROXY_API_KEY>` 鉴权。
 - `kiro/routes_anthropic.py` 提供 `/v1/messages`，支持 `x-api-key` 和 `Authorization: Bearer` 鉴权。
 - 两套路由的主流程相同：鉴权 → truncation recovery 消息修正 → 生成 conversation ID → `ModelResolver.resolve()` → converter 构造 Kiro payload → `request_executor.execute_kiro_request()` → streaming/non-streaming 响应转换。
+- `/health` 只返回本地运行快照，不主动请求上游；其中包含 auth 生命周期状态、错误分类计数和共享 HTTP client 配置。
 
 ### 认证与上游请求
 

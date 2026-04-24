@@ -8,8 +8,10 @@ Tests token management logic for Kiro without real network requests.
 import asyncio
 import json
 import pytest
+import tempfile
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, Mock, patch
+from pathlib import Path
 import httpx
 
 from kiro.auth import KiroAuthManager, AuthType
@@ -184,7 +186,58 @@ class TestKiroAuthManagerTokenExpiration:
         assert result is False
 
 
-class TestKiroAuthManagerTokenRefresh:
+    def test_get_health_snapshot_reports_refresh_state(self):
+        """
+        What it does: Verifies auth health snapshot includes expiration and refresh fields.
+        Purpose: Ensure /health can expose auth lifecycle diagnostics.
+        """
+        print("Setup: Creating KiroAuthManager with token state...")
+        manager = KiroAuthManager(refresh_token="test_token")
+        manager._access_token = "access_token"
+        manager._expires_at = datetime.now(timezone.utc) + timedelta(minutes=20)
+        manager._last_refresh_at = datetime.now(timezone.utc)
+        manager._refresh_failures = 0
+
+        print("Action: Reading health snapshot...")
+        snapshot = manager.get_health_snapshot()
+
+        print(f"Snapshot: {snapshot}")
+        assert snapshot["initialized"] is True
+        assert snapshot["expires_at"] is not None
+        assert snapshot["expires_in_seconds"] is not None
+        assert snapshot["refresh_failures"] == 0
+        assert snapshot["last_refresh_at"] is not None
+        assert snapshot["expired"] is False
+
+    def test_get_health_snapshot_uses_loaded_token_as_last_refresh(self):
+        """
+        What it does: Verifies loaded valid credentials populate last_refresh_at.
+        Purpose: Ensure /health exposes a useful refresh timestamp after startup.
+        """
+        print("Setup: Creating temporary credentials file with valid token...")
+        future_expires = (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump({
+                "accessToken": "loaded_access_token",
+                "refreshToken": "loaded_refresh_token",
+                "expiresAt": future_expires,
+                "region": "us-east-1"
+            }, f)
+            creds_path = f.name
+
+        try:
+            print("Action: Initializing KiroAuthManager from credentials file...")
+            manager = KiroAuthManager(creds_file=creds_path)
+
+            print("Verification: last_refresh_at is populated from loaded valid token...")
+            assert manager._last_refresh_at is not None
+
+            snapshot = manager.get_health_snapshot()
+            assert snapshot["last_refresh_at"] is not None
+            assert snapshot["expires_at"] is not None
+        finally:
+            Path(creds_path).unlink(missing_ok=True)
+
     """Tests for token refresh mechanism."""
     
     @pytest.mark.asyncio

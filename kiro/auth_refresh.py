@@ -70,6 +70,7 @@ async def refresh_token_kiro_desktop(manager) -> None:
         tz=timezone.utc
     )
 
+    manager._mark_refresh_success()
     logger.info(f"Token refreshed via Kiro Desktop Auth, expires: {manager._expires_at.isoformat()}")
 
     if manager._sqlite_db:
@@ -161,6 +162,7 @@ async def do_aws_sso_oidc_refresh(manager) -> None:
 
     manager._expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
 
+    manager._mark_refresh_success()
     logger.info(f"Token refreshed via AWS SSO OIDC, expires: {manager._expires_at.isoformat()}")
 
     if manager._sqlite_db:

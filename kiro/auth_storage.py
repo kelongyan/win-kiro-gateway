@@ -80,6 +80,8 @@ def load_credentials_from_sqlite(manager, db_path: str, token_keys: Sequence[str
                             manager._expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
                         else:
                             manager._expires_at = datetime.fromisoformat(expires_str)
+                        if manager._access_token and manager._expires_at and manager._expires_at > datetime.now(manager._expires_at.tzinfo):
+                            manager._last_refresh_at = datetime.now(manager._expires_at.tzinfo)
                     except Exception as e:
                         logger.warning(f"Failed to parse expires_at from SQLite: {e}")
 
@@ -158,6 +160,8 @@ def load_credentials_from_file(manager, file_path: str) -> None:
                     manager._expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
                 else:
                     manager._expires_at = datetime.fromisoformat(expires_str)
+                if manager._access_token and manager._expires_at and manager._expires_at > datetime.now(manager._expires_at.tzinfo):
+                    manager._last_refresh_at = datetime.now(manager._expires_at.tzinfo)
             except Exception as e:
                 logger.warning(f"Failed to parse expiresAt: {e}")
 

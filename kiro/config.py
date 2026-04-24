@@ -444,9 +444,12 @@ FIRST_TOKEN_TIMEOUT: float = float(os.getenv("FIRST_TOKEN_TIMEOUT", "15"))
 STREAMING_READ_TIMEOUT: float = float(os.getenv("STREAMING_READ_TIMEOUT", "300"))
 
 # Shared HTTP client pool settings.
+# Conservative values to prevent SSL connection reuse errors (DECRYPTION_FAILED_OR_BAD_RECORD_MAC).
+# AWS may close idle connections within 10-15 seconds, so we use shorter expiry to avoid
+# reusing stale connections. Streaming requests already use Connection: close (issue #38).
 HTTP_MAX_CONNECTIONS: int = _parse_positive_int_env("HTTP_MAX_CONNECTIONS", 100)
-HTTP_MAX_KEEPALIVE_CONNECTIONS: int = _parse_positive_int_env("HTTP_MAX_KEEPALIVE_CONNECTIONS", 20)
-HTTP_KEEPALIVE_EXPIRY: float = _parse_positive_float_env("HTTP_KEEPALIVE_EXPIRY", 30.0)
+HTTP_MAX_KEEPALIVE_CONNECTIONS: int = _parse_positive_int_env("HTTP_MAX_KEEPALIVE_CONNECTIONS", 5)
+HTTP_KEEPALIVE_EXPIRY: float = _parse_positive_float_env("HTTP_KEEPALIVE_EXPIRY", 5.0)
 HTTP_CONNECT_TIMEOUT: float = _parse_positive_float_env("HTTP_CONNECT_TIMEOUT", 30.0)
 HTTP_WRITE_TIMEOUT: float = _parse_positive_float_env("HTTP_WRITE_TIMEOUT", 30.0)
 HTTP_POOL_TIMEOUT: float = _parse_positive_float_env("HTTP_POOL_TIMEOUT", 30.0)

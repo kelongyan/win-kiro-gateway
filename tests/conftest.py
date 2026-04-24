@@ -31,6 +31,47 @@ os.environ.setdefault("VPN_PROXY_URL", "")
 os.environ.setdefault("TOKEN_AUTO_REFRESH_ENABLED", "false")
 
 
+@pytest.fixture(autouse=True)
+def clear_truncation_state_between_tests():
+    """
+    Keep truncation recovery caches isolated between tests.
+
+    These caches are module-level singletons used by multiple route and streaming
+    tests. Without clearing them, one test can leave behind truncation metadata
+    that changes the behavior of later tests depending on execution order.
+    """
+    from kiro.truncation_state import _tool_truncation_cache, _content_truncation_cache
+
+    _tool_truncation_cache.clear()
+    _content_truncation_cache.clear()
+    yield
+    _tool_truncation_cache.clear()
+    _content_truncation_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def restore_truncation_recovery_config():
+    """
+    Restore truncation recovery config between tests.
+
+    Some tests reload `kiro.config` with modified environment variables. Route and
+    recovery tests assume the repository default (`TRUNCATION_RECOVERY=True`), so
+    we reset the relevant module state after each test to avoid order-dependent
+    failures.
+    """
+    import kiro.config as config_module
+    import kiro.routes_openai as routes_openai_module
+    import kiro.routes_anthropic as routes_anthropic_module
+
+    config_module.TRUNCATION_RECOVERY = True
+    routes_openai_module.UPSTREAM_PROVIDER = config_module.UPSTREAM_PROVIDER
+    routes_anthropic_module.UPSTREAM_PROVIDER = config_module.UPSTREAM_PROVIDER
+    yield
+    config_module.TRUNCATION_RECOVERY = True
+    routes_openai_module.UPSTREAM_PROVIDER = config_module.UPSTREAM_PROVIDER
+    routes_anthropic_module.UPSTREAM_PROVIDER = config_module.UPSTREAM_PROVIDER
+
+
 # =============================================================================
 # Event Loop Fixtures
 # =============================================================================
@@ -384,7 +425,7 @@ def block_all_network_calls():
     for patcher in patchers:
         patcher.start()
     
-    print("🛡️ GLOBAL NETWORK BLOCKING ACTIVATED")
+    print("[NetworkBlock] GLOBAL NETWORK BLOCKING ACTIVATED")
     
     yield
 
@@ -392,7 +433,7 @@ def block_all_network_calls():
     for patcher in patchers:
         patcher.stop()
     
-    print("🛡️ GLOBAL NETWORK BLOCKING DEACTIVATED")
+    print("[NetworkBlock] GLOBAL NETWORK BLOCKING DEACTIVATED")
 
 
 # =============================================================================

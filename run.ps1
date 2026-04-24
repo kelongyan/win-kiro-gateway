@@ -559,7 +559,7 @@ function Test-GatewayHealth {
 
 function Wait-GatewayReady {
     param(
-        [int]$TimeoutSeconds = 30,
+        [int]$TimeoutSeconds = 90,
         [int]$PollIntervalMilliseconds = 500
     )
 
@@ -705,11 +705,6 @@ function Start-Gateway {
         Write-Host "凭证已于 $($account.ExpiresAtLocal) 过期。请在 Kiro IDE 中重新登录。" -ForegroundColor Red
         return
     }
-    if ($account.IsExpiringSoon) {
-        Write-Host ""
-        Write-Host "警告: 凭证将于 $($account.ExpiresAtLocal) 过期。" -ForegroundColor Yellow
-    }
-
     Write-Host ""
     if ($Foreground) {
         Write-Host "正在以前台模式启动网关 http://localhost:$Script:GatewayPort ..." -ForegroundColor Cyan
@@ -934,11 +929,6 @@ function Show-Menu {
     Write-Host ""
 
     if ($account.Found) {
-        $statusText = if ($account.IsExpired) { "已过期" } elseif ($account.IsExpiringSoon) { "即将过期" } else { "正常" }
-        $statusColor = if ($account.IsExpired) { "Red" } elseif ($account.IsExpiringSoon) { "Yellow" } else { "Green" }
-        Write-Host "账号: $($account.AuthMethod)/$($account.Provider) | $statusText" -ForegroundColor $statusColor
-        Write-Host "过期时间: $($account.ExpiresAtLocal)"
-
         if ($account.AccountId) {
             $shortId = if ($account.AccountId.Length -gt 50) {
                 $account.AccountId.Substring(0, 47) + "..."

@@ -41,6 +41,7 @@ from kiro.config import (
     APP_VERSION,
     UPSTREAM_PROVIDER,
     DEBUG_MODE,
+    VPN_PROXY_URL,
 )
 from kiro.models_openai import (
     OpenAIModel,
@@ -76,6 +77,34 @@ def _increment_error_counter(health_counters: Optional[dict], error_type: str) -
     health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
     errors_by_type = health_counters.setdefault("errors_by_type", {})
     errors_by_type[error_type] = errors_by_type.get(error_type, 0) + 1
+
+
+def _ensure_health_error_counter_shape(health_counters: Optional[dict]) -> dict:
+    if not isinstance(health_counters, dict):
+        return {}
+
+    errors_by_type = health_counters.setdefault("errors_by_type", {})
+    for key in (
+        "auth",
+        "rate_limit",
+        "timeout",
+        "upstream",
+        "validation",
+        "internal",
+        "stream_interrupted_before_first_token",
+        "stream_interrupted_mid_stream",
+    ):
+        errors_by_type.setdefault(key, 0)
+    return errors_by_type
+
+
+def _classify_stream_interruption(error: Exception) -> Optional[str]:
+    message = str(error).lower()
+    if "interrupted before first token" in message:
+        return "stream_interrupted_before_first_token"
+    if "interrupted before completion" in message or "interrupted after first token" in message:
+        return "stream_interrupted_mid_stream"
+    return None
 
 
 # --- Security scheme ---
@@ -134,6 +163,7 @@ async def health(request: Request):
     auth_manager = getattr(request.app.state, "auth_manager", None)
     model_cache = getattr(request.app.state, "model_cache", None)
     health_counters = getattr(request.app.state, "health_counters", {})
+    _ensure_health_error_counter_shape(health_counters)
     started_at = getattr(request.app.state, "started_at", None)
     limiter = getattr(request.app.state, "request_limiter", None)
     limiter_limit = getattr(request.app.state, "request_limiter_limit", 0)
@@ -405,14 +435,18 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 streaming_error = None
                 client_disconnected = False
                 try:
-                    async for chunk in stream_kiro_to_openai(
-                        http_client.client,
-                        response,
-                        request_data.model,
-                        model_cache,
-                        auth_manager,
+                    async def make_request():
+                        return await execute_kiro_request(http_client, url, kiro_payload)
+
+                    async for chunk in stream_with_first_token_retry(
+                        make_request=make_request,
+                        client=http_client.client,
+                        model=request_data.model,
+                        model_cache=model_cache,
+                        auth_manager=auth_manager,
                         request_messages=messages_for_tokenizer,
-                        request_tools=tools_for_tokenizer
+                        request_tools=tools_for_tokenizer,
+                        initial_response=response,
                     ):
                         yield chunk
                 except GeneratorExit:
@@ -432,9 +466,16 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                     await close_route_http_client(http_client)
                     # Log access log for streaming (success or error)
                     if streaming_error:
+                        interruption_type = _classify_stream_interruption(streaming_error)
+                        if interruption_type:
+                            _increment_error_counter(health_counters, interruption_type)
                         error_type = type(streaming_error).__name__
                         error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
-                        logger.error(f"HTTP 500 - POST /v1/chat/completions (streaming) - [{error_type}] {error_msg[:100]}")
+                        logger.error(
+                            f"HTTP 500 - POST /v1/chat/completions (streaming) - [{error_type}] {error_msg[:100]} | "
+                            f"model={request_data.model}, route=openai, upstream_provider={UPSTREAM_PROVIDER}, "
+                            f"proxy_enabled={bool(VPN_PROXY_URL)}, interruption_type={interruption_type or 'none'}"
+                        )
                     elif client_disconnected:
                         logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
                     else:

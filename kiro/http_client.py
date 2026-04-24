@@ -32,6 +32,7 @@ with connection pooling for better resource management.
 """
 
 import asyncio
+import os
 from typing import Optional
 
 import httpx
@@ -234,21 +235,37 @@ class KiroHttpClient:
         client = await self._get_client(stream=stream)
         last_error = None
         last_error_info: Optional[NetworkErrorInfo] = None
+        using_shared_client = self._shared_client is not None
+        proxy_flags = {
+            "HTTP_PROXY": bool(os.getenv("HTTP_PROXY")),
+            "HTTPS_PROXY": bool(os.getenv("HTTPS_PROXY")),
+            "ALL_PROXY": bool(os.getenv("ALL_PROXY")),
+        }
         
         for attempt in range(max_retries):
             try:
                 # Get current token
                 token = await self.auth_manager.get_access_token()
                 headers = get_kiro_headers(self.auth_manager, token)
+                connection_close_enabled = False
                 
                 if stream:
                     # Prevent CLOSE_WAIT connection leak (issue #38)
                     headers["Connection"] = "close"
+                    connection_close_enabled = True
                     req = client.build_request(method, url, json=json_data, headers=headers)
-                    logger.debug("Sending request to Kiro API...")
+                    logger.debug(
+                        f"Sending request to Kiro API... stream={stream}, method={method}, "
+                        f"using_shared_client={using_shared_client}, connection_close={connection_close_enabled}, "
+                        f"proxies={proxy_flags}, url={url}"
+                    )
                     response = await client.send(req, stream=True)
                 else:
-                    logger.debug("Sending request to Kiro API...")
+                    logger.debug(
+                        f"Sending request to Kiro API... stream={stream}, method={method}, "
+                        f"using_shared_client={using_shared_client}, connection_close={connection_close_enabled}, "
+                        f"proxies={proxy_flags}, url={url}"
+                    )
                     response = await client.request(method, url, json=json_data, headers=headers)
                 
                 # Check status
@@ -326,13 +343,16 @@ class KiroHttpClient:
                     delay = self._calculate_retry_delay(attempt)
                     logger.warning(
                         f"{short_msg} - stream={stream}, attempt {attempt + 1}/{max_retries}, "
-                        f"waiting {delay}s | technical: {error_info.technical_details}"
+                        f"waiting {delay}s | using_shared_client={using_shared_client}, "
+                        f"connection_close={stream}, proxies={proxy_flags}, url={url} | "
+                        f"technical: {error_info.technical_details}"
                     )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
                         f"{short_msg} - no more retries (attempt {attempt + 1}/{max_retries}) | "
-                        f"technical: {error_info.technical_details}"
+                        f"using_shared_client={using_shared_client}, connection_close={stream}, "
+                        f"proxies={proxy_flags}, url={url} | technical: {error_info.technical_details}"
                     )
                     break
 

@@ -147,6 +147,16 @@ async def parse_kiro_stream(
     """
     parser = AwsEventStreamParser()
     first_token_received = False
+    chunk_count = 0
+    bytes_received = 0
+
+    response_headers = response.headers
+    response_url = str(getattr(response, "url", ""))
+    response_host = getattr(getattr(response, "url", None), "host", None) or "unknown"
+    response_http_version = getattr(response, "http_version", None) or "unknown"
+    response_content_type = response_headers.get("content-type", "")
+    response_transfer_encoding = response_headers.get("transfer-encoding", "")
+    response_connection = response_headers.get("connection", "")
     
     # Initialize thinking parser if fake reasoning is enabled
     thinking_parser: Optional[ThinkingParser] = None
@@ -159,17 +169,27 @@ async def parse_kiro_stream(
         byte_iterator = response.aiter_bytes()
         
         # Wait for first chunk with timeout
+        first_chunk_awaitable = None
         try:
             logger.debug(f"Waiting for first token (timeout={first_token_timeout}s)...")
-            first_byte_chunk = await asyncio.wait_for(
-                byte_iterator.__anext__(),
-                timeout=first_token_timeout
+            first_chunk_awaitable = byte_iterator.__anext__()
+            first_byte_chunk = await asyncio.wait_for(first_chunk_awaitable, timeout=first_token_timeout)
+            chunk_count = 1
+            bytes_received = len(first_byte_chunk)
+            logger.debug(
+                f"First token received | host={response_host}, status={response.status_code}, "
+                f"http_version={response_http_version}, content_type={response_content_type or '-'}, "
+                f"transfer_encoding={response_transfer_encoding or '-'}, connection={response_connection or '-'}, "
+                f"chunk_count={chunk_count}, bytes_received={bytes_received}, url={response_url}"
             )
-            logger.debug("First token received")
         except asyncio.TimeoutError:
+            if first_chunk_awaitable is not None and hasattr(first_chunk_awaitable, "close"):
+                first_chunk_awaitable.close()
             logger.warning(f"[FirstTokenTimeout] Model did not respond within {first_token_timeout}s")
             raise FirstTokenTimeoutError(f"No response within {first_token_timeout} seconds")
         except StopAsyncIteration:
+            if first_chunk_awaitable is not None and hasattr(first_chunk_awaitable, "close"):
+                first_chunk_awaitable.close()
             # Empty response - this is normal, just finish
             logger.debug("Empty response from Kiro API")
             return
@@ -178,7 +198,11 @@ async def parse_kiro_stream(
             error_msg = str(e) if str(e) else repr(e)
             logger.warning(
                 f"[StreamInterrupted] Upstream closed connection before first token "
-                f"(RemoteProtocolError, first_token_received=False): {error_msg}"
+                f"(RemoteProtocolError, first_token_received=False, host={response_host}, "
+                f"status={response.status_code}, http_version={response_http_version}, "
+                f"content_type={response_content_type or '-'}, transfer_encoding={response_transfer_encoding or '-'}, "
+                f"connection={response_connection or '-'}, chunk_count={chunk_count}, "
+                f"bytes_received={bytes_received}, url={response_url}): {error_msg}"
             )
             raise UpstreamStreamInterruptedError(
                 f"Upstream stream interrupted before first token: {error_msg}",
@@ -197,6 +221,8 @@ async def parse_kiro_stream(
         # Continue reading remaining chunks
         try:
             async for chunk in byte_iterator:
+                chunk_count += 1
+                bytes_received += len(chunk)
                 if debug_logger:
                     debug_logger.log_raw_chunk(chunk)
 
@@ -208,7 +234,11 @@ async def parse_kiro_stream(
             error_msg = str(e) if str(e) else repr(e)
             logger.warning(
                 f"[StreamInterrupted] Upstream closed connection mid-stream "
-                f"(RemoteProtocolError, first_token_received={first_token_received}): {error_msg}"
+                f"(RemoteProtocolError, first_token_received={first_token_received}, host={response_host}, "
+                f"status={response.status_code}, http_version={response_http_version}, "
+                f"content_type={response_content_type or '-'}, transfer_encoding={response_transfer_encoding or '-'}, "
+                f"connection={response_connection or '-'}, chunk_count={chunk_count}, "
+                f"bytes_received={bytes_received}, url={response_url}): {error_msg}"
             )
             raise UpstreamStreamInterruptedError(
                 f"Upstream stream interrupted after first token: {error_msg}",
@@ -407,6 +437,7 @@ async def stream_with_first_token_retry(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     on_http_error: Optional[Callable[[int, str], Exception]] = None,
     on_all_retries_failed: Optional[Callable[[int, float], Exception]] = None,
+    initial_response: Optional[httpx.Response] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Generic streaming with automatic retry on first token timeout.
@@ -429,6 +460,9 @@ async def stream_with_first_token_retry(
         on_all_retries_failed: Optional callback to create exception when all retries fail.
                               Receives (max_retries, timeout), returns Exception.
                               If None, raises generic Exception.
+        initial_response: Optional already-open upstream response to use as attempt 1.
+                         Useful when the caller needs to validate the first HTTP status
+                         before starting the streaming response.
     
     Yields:
         Strings in SSE format (format depends on stream_processor)
@@ -453,8 +487,11 @@ async def stream_with_first_token_retry(
             # Make request
             if attempt > 0:
                 logger.warning(f"Retry attempt {attempt + 1}/{max_retries} after first token timeout")
-            
-            response = await make_request()
+
+            if attempt == 0 and initial_response is not None:
+                response = initial_response
+            else:
+                response = await make_request()
             
             if response.status_code != 200:
                 # Error from API - close response and raise exception
@@ -499,6 +536,31 @@ async def stream_with_first_token_retry(
             
             # Continue to next attempt
             continue
+
+        except UpstreamStreamInterruptedError as e:
+            last_error = e
+
+            if not e.first_token_received:
+                logger.warning(
+                    f"[StreamInterrupted] Attempt {attempt + 1}/{max_retries} failed before first token - {e}"
+                )
+
+                if response:
+                    try:
+                        await response.aclose()
+                    except Exception:
+                        pass
+
+                continue
+
+            error_msg = str(e) if str(e) else "(empty message)"
+            logger.error("Unexpected error during streaming: {}", error_msg, exc_info=True)
+            if response:
+                try:
+                    await response.aclose()
+                except Exception:
+                    pass
+            raise
             
         except Exception as e:
             # Other errors - no retry, propagate

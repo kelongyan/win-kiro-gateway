@@ -42,6 +42,8 @@ from kiro.config import (
     FIRST_TOKEN_TIMEOUT,
     FIRST_TOKEN_MAX_RETRIES,
     FAKE_REASONING_HANDLING,
+    UPSTREAM_PROVIDER,
+    VPN_PROXY_URL,
 )
 from kiro.tokenizer import count_tokens, count_message_tokens, count_tools_tokens
 
@@ -321,7 +323,8 @@ async def stream_kiro_to_openai_internal(
         streaming_error_occurred = True
         logger.warning(
             f"[StreamInterrupted] OpenAI streaming: upstream closed stream "
-            f"(first_token_received={e.first_token_received}): {e}"
+            f"(first_token_received={e.first_token_received}, model={model}, route=openai, "
+            f"upstream_provider={UPSTREAM_PROVIDER}, proxy_enabled={bool(VPN_PROXY_URL)}): {e}"
         )
         # 不把底层 httpx 原文 (incomplete chunked read) 直接抛给客户端
         raise RuntimeError(
@@ -401,7 +404,8 @@ async def stream_with_first_token_retry(
     max_retries: int = FIRST_TOKEN_MAX_RETRIES,
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    initial_response: Optional[httpx.Response] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Streaming with automatic retry on first token timeout.
@@ -472,6 +476,7 @@ async def stream_with_first_token_retry(
         first_token_timeout=first_token_timeout,
         on_http_error=create_http_error,
         on_all_retries_failed=create_timeout_error,
+        initial_response=initial_response,
     ):
         yield chunk
 

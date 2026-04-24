@@ -30,18 +30,6 @@ from kiro.truncation_state import (
 )
 
 
-@pytest.fixture(autouse=True)
-def clear_cache():
-    """Clear cache before and after each test to ensure isolation."""
-    print("\n[Setup] Clearing truncation cache...")
-    _tool_truncation_cache.clear()
-    _content_truncation_cache.clear()
-    yield
-    print("[Teardown] Clearing truncation cache...")
-    _tool_truncation_cache.clear()
-    _content_truncation_cache.clear()
-
-
 class TestToolTruncation:
     """Test suite for tool truncation cache operations."""
     

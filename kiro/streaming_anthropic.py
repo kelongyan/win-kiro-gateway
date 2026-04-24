@@ -50,7 +50,13 @@ from kiro.streaming_core import (
 )
 from kiro.tokenizer import count_tokens, count_message_tokens, count_tools_tokens
 from kiro.parsers import parse_bracket_tool_calls
-from kiro.config import FIRST_TOKEN_TIMEOUT, FIRST_TOKEN_MAX_RETRIES, FAKE_REASONING_HANDLING
+from kiro.config import (
+    FIRST_TOKEN_TIMEOUT,
+    FIRST_TOKEN_MAX_RETRIES,
+    FAKE_REASONING_HANDLING,
+    UPSTREAM_PROVIDER,
+    VPN_PROXY_URL,
+)
 from kiro.streaming_shared import (
     detect_content_truncation,
     log_content_truncation,
@@ -495,9 +501,10 @@ async def stream_kiro_to_anthropic(
     except UpstreamStreamInterruptedError as e:
         logger.warning(
             f"[StreamInterrupted] Anthropic streaming: upstream closed stream "
-            f"(first_token_received={e.first_token_received}): {e}"
+            f"(first_token_received={e.first_token_received}, model={model}, route=anthropic, "
+            f"upstream_provider={UPSTREAM_PROVIDER}, proxy_enabled={bool(VPN_PROXY_URL)}): {e}"
         )
-        # 规范化错误消息，不暴露底层 httpx 原文
+        # 规范化错误消息，不暴露底层 httpx 原文；对客户端标记为连接性错误。
         normalized_msg = (
             "Upstream stream was interrupted before completion. "
             "The upstream service may have closed the connection early. "
@@ -506,7 +513,7 @@ async def stream_kiro_to_anthropic(
         yield format_sse_event("error", {
             "type": "error",
             "error": {
-                "type": "api_error",
+                "type": "connectivity_error",
                 "message": normalized_msg
             }
         })
@@ -651,7 +658,8 @@ async def stream_with_first_token_retry_anthropic(
     max_retries: int = FIRST_TOKEN_MAX_RETRIES,
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    initial_response: Optional[httpx.Response] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Streaming with automatic retry on first token timeout for Anthropic API.
@@ -717,5 +725,6 @@ async def stream_with_first_token_retry_anthropic(
         first_token_timeout=first_token_timeout,
         on_http_error=create_http_error,
         on_all_retries_failed=create_timeout_error,
+        initial_response=initial_response,
     ):
         yield chunk

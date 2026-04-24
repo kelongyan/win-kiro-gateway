@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from kiro.routes_anthropic import verify_anthropic_api_key, router
 from kiro.config import PROXY_API_KEY
 from kiro.model_resolver import ModelResolution
+from kiro.streaming_core import UpstreamStreamInterruptedError
 
 
 # =============================================================================
@@ -716,7 +717,7 @@ class TestMessagesOptionalParams:
         """
         print("Action: POST /v1/messages with stream=true...")
         
-        # Mock the streaming function to avoid real HTTP requests
+        # Mock the retry wrapper to avoid real HTTP requests
         async def mock_stream(*args, **kwargs):
             yield 'event: message_start\ndata: {"type":"message_start"}\n\n'
             yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
@@ -725,7 +726,7 @@ class TestMessagesOptionalParams:
         mock_response = MagicMock()
         mock_response.status_code = 200
         
-        with patch('kiro.routes_anthropic.stream_kiro_to_anthropic', mock_stream), \
+        with patch('kiro.routes_anthropic.stream_with_first_token_retry_anthropic', mock_stream), \
              patch('kiro.http_client.KiroHttpClient.request_with_retry', return_value=mock_response):
             response = test_client.post(
                 "/v1/messages",
@@ -811,6 +812,55 @@ class TestMessagesAnthropicVersion:
         print(f"Status: {response.status_code}")
         # Should pass validation
         assert response.status_code != 422
+
+
+class TestAnthropicStreamingObservability:
+    """Tests for Anthropic streaming observability counters."""
+
+    def test_stream_interruption_before_first_token_updates_health_counter(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies pre-first-token interruption increments the dedicated health counter.
+        Purpose: Ensure /health separates startup disconnects from mid-stream failures.
+        """
+        print("Setup: Preparing app state and mock pre-first-token failure...")
+        test_client.app.state.health_counters = {
+            "requests_total": 0,
+            "errors_total": 0,
+            "cached_responses": 0,
+            "errors_by_type": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        async def mock_stream(*args, **kwargs):
+            raise RuntimeError(
+                "Upstream stream interrupted before first token: "
+                "peer closed connection without sending complete message body"
+            )
+            yield  # Make it a generator
+
+        print("Action: POST /v1/messages with streaming interruption...")
+        with patch('kiro.routes_anthropic.execute_kiro_request', new=AsyncMock(return_value=mock_response)), \
+             patch('kiro.routes_anthropic.stream_with_first_token_retry_anthropic', mock_stream), \
+             patch('kiro.routes_anthropic.close_route_http_client', new=AsyncMock()):
+            response = test_client.post(
+                "/v1/messages",
+                headers={"x-api-key": valid_proxy_api_key},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
+                }
+            )
+
+        print(f"Status: {response.status_code}")
+        counters = test_client.app.state.health_counters["errors_by_type"]
+        print(f"Counters: {counters}")
+
+        assert response.status_code == 200
+        assert counters["stream_interrupted_before_first_token"] == 1
     
     def test_works_without_anthropic_version_header(self, test_client, valid_proxy_api_key):
         """
@@ -872,6 +922,128 @@ class TestAnthropicRouterIntegration:
         print("Checking: Router tags...")
         print(f"Router tags: {router.tags}")
         assert "Anthropic API" in router.tags
+
+
+class TestAnthropicStreamingRetryIntegration:
+    """Tests that Anthropic routes use the retry wrapper for streaming."""
+
+    def test_streaming_route_uses_first_token_retry_wrapper(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the Anthropic streaming route uses the retry wrapper.
+        Purpose: Ensure pre-first-token disconnect retries actually apply on the real route path.
+        """
+        print("Setup: Mock streaming wrapper and guard direct stream function...")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        async def mock_retry_wrapper(*args, **kwargs):
+            yield 'event: message_start\ndata: {"type": "message_start"}\n\n'
+            yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+
+        async def unexpected_direct_stream(*args, **kwargs):
+            raise AssertionError("route bypassed stream_with_first_token_retry")
+            yield
+
+        print("Action: POST /v1/messages with stream=true...")
+        with patch('kiro.routes_anthropic.execute_kiro_request', new=AsyncMock(return_value=mock_response)), \
+             patch('kiro.routes_anthropic.stream_with_first_token_retry_anthropic', mock_retry_wrapper), \
+             patch('kiro.routes_anthropic.stream_kiro_to_anthropic', unexpected_direct_stream), \
+             patch('kiro.routes_anthropic.close_route_http_client', new=AsyncMock()):
+            response = test_client.post(
+                "/v1/messages",
+                headers={"x-api-key": valid_proxy_api_key},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
+                }
+            )
+
+        print(f"Status: {response.status_code}")
+        print(f"Body: {response.text}")
+        assert response.status_code == 200
+        assert "message_start" in response.text
+
+    def test_streaming_route_does_not_duplicate_initial_upstream_request(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the Anthropic streaming route does not issue a duplicate upstream request.
+        Purpose: Ensure wiring the retry wrapper does not double-send successful streaming requests.
+        """
+        print("Setup: Mock upstream request and streaming wrapper...")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        execute_mock = AsyncMock(return_value=mock_response)
+
+        async def mock_retry_wrapper(*args, **kwargs):
+            yield 'event: message_start\ndata: {"type": "message_start"}\n\n'
+            yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+
+        print("Action: POST /v1/messages with stream=true...")
+        with patch('kiro.routes_anthropic.execute_kiro_request', execute_mock), \
+             patch('kiro.routes_anthropic.stream_with_first_token_retry_anthropic', mock_retry_wrapper), \
+             patch('kiro.routes_anthropic.close_route_http_client', new=AsyncMock()):
+            response = test_client.post(
+                "/v1/messages",
+                headers={"x-api-key": valid_proxy_api_key},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
+                }
+            )
+
+        print(f"execute_kiro_request call count: {execute_mock.await_count}")
+        assert response.status_code == 200
+        assert execute_mock.await_count == 1
+
+    def test_streaming_route_recovers_from_pre_first_token_interruption(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the Anthropic streaming route recovers when the first attempt disconnects before first token.
+        Purpose: Ensure the real route path retries instead of surfacing the normalized interruption error immediately.
+        """
+        print("Setup: First streaming attempt fails before first token, second succeeds...")
+
+        first_response = MagicMock()
+        first_response.status_code = 200
+        second_response = MagicMock()
+        second_response.status_code = 200
+
+        execute_mock = AsyncMock(side_effect=[first_response, second_response])
+
+        async def mock_retry_wrapper(*args, **kwargs):
+            assert kwargs["initial_response"] is first_response
+            next_response = await kwargs["make_request"]()
+            assert next_response is second_response
+            yield 'event: message_start\ndata: {"type": "message_start"}\n\n'
+            yield 'event: message_delta\ndata: {"type": "message_delta"}\n\n'
+            yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+
+        print("Action: POST /v1/messages with stream=true...")
+        with patch('kiro.routes_anthropic.execute_kiro_request', execute_mock), \
+             patch('kiro.routes_anthropic.stream_with_first_token_retry_anthropic', mock_retry_wrapper), \
+             patch('kiro.routes_anthropic.close_route_http_client', new=AsyncMock()):
+            response = test_client.post(
+                "/v1/messages",
+                headers={"x-api-key": valid_proxy_api_key},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True,
+                }
+            )
+
+        print(f"Status: {response.status_code}")
+        print(f"execute_kiro_request call count: {execute_mock.await_count}")
+        print(f"Body: {response.text}")
+        assert response.status_code == 200
+        assert execute_mock.await_count == 2
+        assert "message_stop" in response.text
 
 
 class TestModelResolverIntegration:

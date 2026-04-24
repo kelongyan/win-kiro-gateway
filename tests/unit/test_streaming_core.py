@@ -82,7 +82,7 @@ class TestKiroEvent:
         assert event.content == "Hello, world!"
         assert event.thinking_content is None
         assert event.tool_use is None
-        print("✓ Content event created correctly")
+        print("OK: Content event created correctly")
     
     def test_creates_thinking_event(self):
         """
@@ -103,7 +103,7 @@ class TestKiroEvent:
         assert event.thinking_content == "Let me think..."
         assert event.is_first_thinking_chunk is True
         assert event.is_last_thinking_chunk is False
-        print("✓ Thinking event created correctly")
+        print("OK: Thinking event created correctly")
     
     def test_creates_tool_use_event(self):
         """
@@ -122,7 +122,7 @@ class TestKiroEvent:
         assert event.type == "tool_use"
         print(f"Comparing tool_use: Expected {tool_data}, Got {event.tool_use}")
         assert event.tool_use == tool_data
-        print("✓ Tool use event created correctly")
+        print("OK: Tool use event created correctly")
     
     def test_creates_usage_event(self):
         """
@@ -137,7 +137,7 @@ class TestKiroEvent:
         assert event.type == "usage"
         print(f"Comparing usage: Expected {usage_data}, Got {event.usage}")
         assert event.usage == usage_data
-        print("✓ Usage event created correctly")
+        print("OK: Usage event created correctly")
     
     def test_creates_context_usage_event(self):
         """
@@ -151,7 +151,7 @@ class TestKiroEvent:
         assert event.type == "context_usage"
         print(f"Comparing context_usage_percentage: Expected 5.5, Got {event.context_usage_percentage}")
         assert event.context_usage_percentage == 5.5
-        print("✓ Context usage event created correctly")
+        print("OK: Context usage event created correctly")
     
     def test_default_values(self):
         """
@@ -169,7 +169,7 @@ class TestKiroEvent:
         assert event.context_usage_percentage is None
         assert event.is_first_thinking_chunk is False
         assert event.is_last_thinking_chunk is False
-        print("✓ All default values are correct")
+        print("OK: All default values are correct")
 
 
 # ==================================================================================================
@@ -193,7 +193,7 @@ class TestStreamResult:
         assert result.tool_calls == []
         assert result.usage is None
         assert result.context_usage_percentage is None
-        print("✓ Empty StreamResult created correctly")
+        print("OK: Empty StreamResult created correctly")
     
     def test_creates_result_with_content(self):
         """
@@ -205,7 +205,7 @@ class TestStreamResult:
         
         print(f"Comparing content: Expected 'Hello, world!', Got '{result.content}'")
         assert result.content == "Hello, world!"
-        print("✓ StreamResult with content created correctly")
+        print("OK: StreamResult with content created correctly")
     
     def test_creates_result_with_tool_calls(self):
         """
@@ -222,7 +222,7 @@ class TestStreamResult:
         print(f"Comparing tool_calls count: Expected 2, Got {len(result.tool_calls)}")
         assert len(result.tool_calls) == 2
         assert result.tool_calls[0]["id"] == "call_1"
-        print("✓ StreamResult with tool calls created correctly")
+        print("OK: StreamResult with tool calls created correctly")
     
     def test_creates_result_with_usage(self):
         """
@@ -235,7 +235,7 @@ class TestStreamResult:
         
         print(f"Comparing usage: Expected {usage}, Got {result.usage}")
         assert result.usage == usage
-        print("✓ StreamResult with usage created correctly")
+        print("OK: StreamResult with usage created correctly")
     
     def test_creates_full_result(self):
         """
@@ -257,7 +257,7 @@ class TestStreamResult:
         assert len(result.tool_calls) == 1
         assert result.usage == {"credits": 0.001}
         assert result.context_usage_percentage == 3.5
-        print("✓ Full StreamResult created correctly")
+        print("OK: Full StreamResult created correctly")
 
 
 # ==================================================================================================
@@ -277,7 +277,7 @@ class TestFirstTokenTimeoutError:
         
         print(f"Comparing message: Expected 'No response within 30 seconds', Got '{str(error)}'")
         assert str(error) == "No response within 30 seconds"
-        print("✓ Exception created correctly")
+        print("OK: Exception created correctly")
     
     def test_exception_is_catchable(self):
         """
@@ -291,7 +291,7 @@ class TestFirstTokenTimeoutError:
         
         print(f"Caught exception: {exc_info.value}")
         assert "Timeout!" in str(exc_info.value)
-        print("✓ Exception is catchable")
+        print("OK: Exception is catchable")
     
     def test_exception_inherits_from_exception(self):
         """
@@ -302,7 +302,7 @@ class TestFirstTokenTimeoutError:
         error = FirstTokenTimeoutError("Test")
         
         assert isinstance(error, Exception)
-        print("✓ FirstTokenTimeoutError inherits from Exception")
+        print("OK: FirstTokenTimeoutError inherits from Exception")
 
 
 # ==================================================================================================
@@ -344,7 +344,7 @@ class TestParseKiroStream:
         assert len(content_events) == 2
         assert content_events[0].content == "Hello"
         assert content_events[1].content == " World"
-        print("✓ Content events parsed correctly")
+        print("OK: Content events parsed correctly")
     
     @pytest.mark.asyncio
     async def test_parses_usage_events(self, mock_response, mock_parser):
@@ -375,7 +375,7 @@ class TestParseKiroStream:
         
         assert len(usage_events) == 1
         assert usage_events[0].usage == {"credits": 0.001}
-        print("✓ Usage events parsed correctly")
+        print("OK: Usage events parsed correctly")
     
     @pytest.mark.asyncio
     async def test_parses_context_usage_events(self, mock_response, mock_parser):
@@ -406,7 +406,7 @@ class TestParseKiroStream:
         
         assert len(context_events) == 1
         assert context_events[0].context_usage_percentage == 5.5
-        print("✓ Context usage events parsed correctly")
+        print("OK: Context usage events parsed correctly")
     
     @pytest.mark.asyncio
     async def test_yields_tool_calls_at_end(self, mock_response, mock_parser):
@@ -438,7 +438,7 @@ class TestParseKiroStream:
         
         assert len(tool_events) == 1
         assert tool_events[0].tool_use["id"] == "call_1"
-        print("✓ Tool calls yielded correctly")
+        print("OK: Tool calls yielded correctly")
     
     @pytest.mark.asyncio
     async def test_raises_timeout_on_first_token(self, mock_response):
@@ -465,7 +465,7 @@ class TestParseKiroStream:
         
         print(f"Caught exception: {exc_info.value}")
         assert "30" in str(exc_info.value)
-        print("✓ FirstTokenTimeoutError raised on timeout")
+        print("OK: FirstTokenTimeoutError raised on timeout")
     
     @pytest.mark.asyncio
     async def test_handles_empty_response(self, mock_response):
@@ -494,7 +494,49 @@ class TestParseKiroStream:
         
         print(f"Received {len(events)} events")
         assert len(events) == 0
-        print("✓ Empty response handled correctly")
+        print("OK: Empty response handled correctly")
+
+    @pytest.mark.asyncio
+    async def test_closes_pending_first_chunk_awaitable_when_wait_for_fails(self, mock_response):
+        """
+        What it does: Verifies pending first-chunk awaitable is closed when wait_for fails.
+        Goal: Prevent leaked __anext__ coroutines from producing unawaited coroutine warnings in timeout/empty-response tests.
+        """
+        print("Setup: Mock first-chunk awaitable that tracks close()...")
+
+        class ClosableAwaitable:
+            def __init__(self):
+                self.closed = False
+
+            def __await__(self):
+                if False:
+                    yield
+                return b"chunk"
+
+            def close(self):
+                self.closed = True
+
+        pending_awaitable = ClosableAwaitable()
+
+        class FakeByteIterator:
+            def __anext__(self):
+                return pending_awaitable
+
+        mock_response.aiter_bytes = lambda: FakeByteIterator()
+
+        async def mock_wait_for_timeout(*args, **kwargs):
+            raise asyncio.TimeoutError()
+
+        print("Action: Parsing stream with failing wait_for...")
+
+        with patch('kiro.streaming_core.asyncio.wait_for', side_effect=mock_wait_for_timeout):
+            with pytest.raises(FirstTokenTimeoutError):
+                async for _ in parse_kiro_stream(mock_response, first_token_timeout=30):
+                    pass
+
+        print(f"Awaitable closed: {pending_awaitable.closed}")
+        assert pending_awaitable.closed is True
+        print("OK: Pending first-chunk awaitable was closed")
     
     @pytest.mark.asyncio
     async def test_handles_generator_exit(self, mock_response, mock_parser):
@@ -525,7 +567,7 @@ class TestParseKiroStream:
         
         print(f"GeneratorExit raised: {generator_exit_raised}")
         assert generator_exit_raised
-        print("✓ GeneratorExit handled correctly")
+        print("OK: GeneratorExit handled correctly")
 
 
 # ==================================================================================================
@@ -553,7 +595,7 @@ class TestProcessChunk:
         assert len(events) == 1
         assert events[0].type == "content"
         assert events[0].content == "Hello"
-        print("✓ Content event processed correctly")
+        print("OK: Content event processed correctly")
     
     @pytest.mark.asyncio
     async def test_processes_usage_event(self, mock_parser):
@@ -573,7 +615,7 @@ class TestProcessChunk:
         assert len(events) == 1
         assert events[0].type == "usage"
         assert events[0].usage == {"credits": 0.001}
-        print("✓ Usage event processed correctly")
+        print("OK: Usage event processed correctly")
     
     @pytest.mark.asyncio
     async def test_processes_context_usage_event(self, mock_parser):
@@ -593,7 +635,7 @@ class TestProcessChunk:
         assert len(events) == 1
         assert events[0].type == "context_usage"
         assert events[0].context_usage_percentage == 7.5
-        print("✓ Context usage event processed correctly")
+        print("OK: Context usage event processed correctly")
     
     @pytest.mark.asyncio
     async def test_processes_multiple_events(self, mock_parser):
@@ -618,7 +660,7 @@ class TestProcessChunk:
         assert events[0].type == "content"
         assert events[1].type == "content"
         assert events[2].type == "usage"
-        print("✓ Multiple events processed correctly")
+        print("OK: Multiple events processed correctly")
     
     @pytest.mark.asyncio
     async def test_processes_with_thinking_parser(self, mock_parser):
@@ -646,7 +688,7 @@ class TestProcessChunk:
         assert len(events) == 1
         assert events[0].type == "content"
         assert events[0].content == "Hello"
-        print("✓ Thinking parser integration works correctly")
+        print("OK: Thinking parser integration works correctly")
     
     @pytest.mark.asyncio
     async def test_yields_thinking_content(self, mock_parser):
@@ -675,7 +717,7 @@ class TestProcessChunk:
         thinking_events = [e for e in events if e.type == "thinking"]
         assert len(thinking_events) == 1
         assert thinking_events[0].thinking_content == "Let me think"
-        print("✓ Thinking content yielded correctly")
+        print("OK: Thinking content yielded correctly")
 
 
 # ==================================================================================================
@@ -712,7 +754,7 @@ class TestCollectStreamToResult:
         
         print(f"Collected content: '{result.content}'")
         assert result.content == "Hello World"
-        print("✓ Content collected correctly")
+        print("OK: Content collected correctly")
     
     @pytest.mark.asyncio
     async def test_collects_tool_calls(self, mock_response, mock_parser):
@@ -741,7 +783,7 @@ class TestCollectStreamToResult:
         print(f"Collected tool calls: {len(result.tool_calls)}")
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["id"] == "call_1"
-        print("✓ Tool calls collected correctly")
+        print("OK: Tool calls collected correctly")
     
     @pytest.mark.asyncio
     async def test_collects_usage(self, mock_response, mock_parser):
@@ -770,7 +812,7 @@ class TestCollectStreamToResult:
         
         print(f"Collected usage: {result.usage}")
         assert result.usage == {"credits": 0.002}
-        print("✓ Usage collected correctly")
+        print("OK: Usage collected correctly")
     
     @pytest.mark.asyncio
     async def test_collects_context_usage_percentage(self, mock_response, mock_parser):
@@ -799,7 +841,7 @@ class TestCollectStreamToResult:
         
         print(f"Collected context_usage_percentage: {result.context_usage_percentage}")
         assert result.context_usage_percentage == 8.5
-        print("✓ Context usage percentage collected correctly")
+        print("OK: Context usage percentage collected correctly")
     
     @pytest.mark.asyncio
     async def test_collects_thinking_content(self, mock_response, mock_parser):
@@ -837,7 +879,7 @@ class TestCollectStreamToResult:
         print(f"Collected content: '{result.content}'")
         assert result.thinking_content == "Let me think..."
         assert result.content == "Here is my answer"
-        print("✓ Thinking content collected correctly")
+        print("OK: Thinking content collected correctly")
     
     @pytest.mark.asyncio
     async def test_deduplicates_bracket_tool_calls(self, mock_response, mock_parser):
@@ -875,7 +917,7 @@ class TestCollectStreamToResult:
         
         print(f"Collected tool calls: {len(result.tool_calls)}")
         assert len(result.tool_calls) == 2
-        print("✓ Tool calls deduplicated correctly")
+        print("OK: Tool calls deduplicated correctly")
 
 
 # ==================================================================================================
@@ -907,7 +949,7 @@ class TestCalculateTokensFromContextUsage:
         assert prompt_tokens == 19900
         assert prompt_source == "subtraction"
         assert total_source == "API Kiro"
-        print("✓ Tokens calculated correctly")
+        print("OK: Tokens calculated correctly")
     
     def test_handles_zero_percentage(self, mock_model_cache):
         """
@@ -929,7 +971,7 @@ class TestCalculateTokensFromContextUsage:
         assert total_tokens == 100
         assert prompt_source == "unknown"
         assert total_source == "tiktoken"
-        print("✓ Zero percentage handled correctly")
+        print("OK: Zero percentage handled correctly")
     
     def test_handles_none_percentage(self, mock_model_cache):
         """
@@ -951,7 +993,7 @@ class TestCalculateTokensFromContextUsage:
         assert total_tokens == 100
         assert prompt_source == "unknown"
         assert total_source == "tiktoken"
-        print("✓ None percentage handled correctly")
+        print("OK: None percentage handled correctly")
     
     def test_prevents_negative_prompt_tokens(self, mock_model_cache):
         """
@@ -969,7 +1011,7 @@ class TestCalculateTokensFromContextUsage:
         
         print(f"Comparing prompt_tokens: Expected >= 0, Got {prompt_tokens}")
         assert prompt_tokens >= 0
-        print("✓ Negative prompt tokens prevented")
+        print("OK: Negative prompt tokens prevented")
     
     def test_uses_model_specific_max_tokens(self, mock_model_cache):
         """
@@ -992,7 +1034,7 @@ class TestCalculateTokensFromContextUsage:
         
         # Verify model cache was called with correct model
         mock_model_cache.get_max_input_tokens.assert_called_with("claude-haiku-3")
-        print("✓ Model-specific max tokens used correctly")
+        print("OK: Model-specific max tokens used correctly")
     
     def test_small_percentage_calculation(self, mock_model_cache):
         """
@@ -1014,7 +1056,7 @@ class TestCalculateTokensFromContextUsage:
         assert total_tokens == 1000
         print(f"Comparing prompt_tokens: Expected 950, Got {prompt_tokens}")
         assert prompt_tokens == 950
-        print("✓ Small percentage calculated correctly")
+        print("OK: Small percentage calculated correctly")
     
     def test_large_percentage_calculation(self, mock_model_cache):
         """
@@ -1036,7 +1078,7 @@ class TestCalculateTokensFromContextUsage:
         assert total_tokens == 190000
         print(f"Comparing prompt_tokens: Expected 189000, Got {prompt_tokens}")
         assert prompt_tokens == 189000
-        print("✓ Large percentage calculated correctly")
+        print("OK: Large percentage calculated correctly")
 
 
 # ==================================================================================================
@@ -1089,7 +1131,7 @@ class TestThinkingParserIntegration:
                     # Verify ThinkingParser was instantiated
                     mock_thinking_parser_class.assert_called_once()
         
-        print("✓ Thinking parser enabled when fake reasoning is on")
+        print("OK: Thinking parser enabled when fake reasoning is on")
     
     @pytest.mark.asyncio
     async def test_thinking_parser_disabled_when_fake_reasoning_off(self, mock_response, mock_parser):
@@ -1118,7 +1160,7 @@ class TestThinkingParserIntegration:
                     # Verify ThinkingParser was NOT instantiated
                     mock_thinking_parser_class.assert_not_called()
         
-        print("✓ Thinking parser disabled when fake reasoning is off")
+        print("OK: Thinking parser disabled when fake reasoning is off")
     
     @pytest.mark.asyncio
     async def test_thinking_parser_can_be_disabled_via_parameter(self, mock_response, mock_parser):
@@ -1151,7 +1193,7 @@ class TestThinkingParserIntegration:
                     # Verify ThinkingParser was NOT instantiated
                     mock_thinking_parser_class.assert_not_called()
         
-        print("✓ Thinking parser disabled via parameter")
+        print("OK: Thinking parser disabled via parameter")
 
 
 # ==================================================================================================
@@ -1184,7 +1226,7 @@ class TestStreamingCoreErrorHandling:
                 async for event in parse_kiro_stream(mock_response, first_token_timeout=30):
                     pass
         
-        print("✓ FirstTokenTimeoutError propagated correctly")
+        print("OK: FirstTokenTimeoutError propagated correctly")
     
     @pytest.mark.asyncio
     async def test_propagates_generator_exit(self, mock_response, mock_parser):
@@ -1209,7 +1251,7 @@ class TestStreamingCoreErrorHandling:
                     async for event in parse_kiro_stream(mock_response, first_token_timeout=30):
                         pass
         
-        print("✓ GeneratorExit propagated correctly")
+        print("OK: GeneratorExit propagated correctly")
     
     @pytest.mark.asyncio
     async def test_propagates_other_exceptions(self, mock_response, mock_parser):
@@ -1236,7 +1278,7 @@ class TestStreamingCoreErrorHandling:
         
         print(f"Caught exception: {exc_info.value}")
         assert "Test error" in str(exc_info.value)
-        print("✓ RuntimeError propagated correctly")
+        print("OK: RuntimeError propagated correctly")
     
     @pytest.mark.asyncio
     async def test_remote_protocol_error_before_first_token_raises_interrupted_error(self, mock_response, mock_parser):
@@ -1266,7 +1308,7 @@ class TestStreamingCoreErrorHandling:
         print(f"Caught exception: {exc_info.value}")
         assert exc_info.value.first_token_received is False
         assert "interrupted" in str(exc_info.value).lower() or "stream" in str(exc_info.value).lower()
-        print("✓ UpstreamStreamInterruptedError raised with first_token_received=False")
+        print("OK: UpstreamStreamInterruptedError raised with first_token_received=False")
     
     @pytest.mark.asyncio
     async def test_remote_protocol_error_after_first_token_raises_interrupted_error(self, mock_response, mock_parser):
@@ -1302,7 +1344,7 @@ class TestStreamingCoreErrorHandling:
         
         print(f"Caught exception: {exc_info.value}, first_token_received={exc_info.value.first_token_received}")
         assert exc_info.value.first_token_received is True
-        print("✓ UpstreamStreamInterruptedError raised with first_token_received=True")
+        print("OK: UpstreamStreamInterruptedError raised with first_token_received=True")
 
 
 # ==================================================================================================
@@ -1351,7 +1393,7 @@ class TestStreamWithFirstTokenRetryCore:
         print(f"Received {len(chunks)} chunks")
         assert len(chunks) == 3
         assert chunks == ["chunk1", "chunk2", "chunk3"]
-        print("✓ Chunks yielded on success")
+        print("OK: Chunks yielded on success")
     
     @pytest.mark.asyncio
     async def test_retries_on_first_token_timeout(self):
@@ -1394,7 +1436,87 @@ class TestStreamWithFirstTokenRetryCore:
         assert call_count == 2  # First timeout, second success
         assert len(chunks) == 1
         assert chunks[0] == "success_chunk"
-        print("✓ Retry on timeout works correctly")
+        print("OK: Retry on timeout works correctly")
+
+    @pytest.mark.asyncio
+    async def test_retries_on_stream_interruption_before_first_token(self):
+        """
+        What it does: Retries when upstream disconnects before first token.
+        Goal: Verify pre-first-token interruptions are treated like retryable startup failures.
+        """
+        print("Setup: Mock request that disconnects before first token then succeeds...")
+
+        call_count = 0
+
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+
+        async def mock_stream_processor(response):
+            nonlocal call_count
+            if call_count == 1:
+                raise UpstreamStreamInterruptedError(
+                    "Upstream stream interrupted before first token: incomplete chunked read",
+                    first_token_received=False,
+                )
+            yield "success_after_retry"
+
+        print("Action: Streaming with retry on pre-first-token interruption...")
+        chunks = []
+
+        async for chunk in stream_with_first_token_retry(
+            make_request=mock_make_request,
+            stream_processor=mock_stream_processor,
+            max_retries=3,
+            first_token_timeout=30,
+        ):
+            chunks.append(chunk)
+
+        print(f"Call count: {call_count}")
+        print(f"Received {len(chunks)} chunks")
+
+        assert call_count == 2
+        assert chunks == ["success_after_retry"]
+        print("OK: Retry on pre-first-token interruption works correctly")
+
+    @pytest.mark.asyncio
+    async def test_uses_initial_response_without_duplicate_request(self):
+        """
+        What it does: Verifies the retry wrapper can reuse an already-open first response.
+        Goal: Avoid duplicate upstream requests when the route pre-validates the initial HTTP 200.
+        """
+        print("Setup: Pre-existing response and guarded make_request...")
+
+        initial_response = AsyncMock()
+        initial_response.status_code = 200
+        initial_response.aclose = AsyncMock()
+
+        async def mock_make_request():
+            raise AssertionError("make_request should not be called for the first attempt")
+
+        async def mock_stream_processor(response):
+            assert response is initial_response
+            yield "success_from_initial_response"
+
+        print("Action: Streaming with initial_response provided...")
+        chunks = []
+
+        async for chunk in stream_with_first_token_retry(
+            make_request=mock_make_request,
+            stream_processor=mock_stream_processor,
+            max_retries=3,
+            first_token_timeout=30,
+            initial_response=initial_response,
+        ):
+            chunks.append(chunk)
+
+        print(f"Received chunks: {chunks}")
+        assert chunks == ["success_from_initial_response"]
+        print("OK: Initial response reused without duplicate request")
     
     @pytest.mark.asyncio
     async def test_raises_exception_after_all_retries(self):
@@ -1435,7 +1557,7 @@ class TestStreamWithFirstTokenRetryCore:
         assert call_count == 3  # Should try exactly 3 times
         assert "30" in str(exc_info.value)  # Timeout value in message
         assert "3" in str(exc_info.value)  # Retry count in message
-        print("✓ Exception raised after all retries")
+        print("OK: Exception raised after all retries")
     
     @pytest.mark.asyncio
     async def test_uses_custom_error_callbacks(self):
@@ -1474,7 +1596,7 @@ class TestStreamWithFirstTokenRetryCore:
         assert "Custom error" in str(exc_info.value)
         assert "2 retries" in str(exc_info.value)
         assert "15" in str(exc_info.value)
-        print("✓ Custom callback used correctly")
+        print("OK: Custom callback used correctly")
     
     @pytest.mark.asyncio
     async def test_handles_http_error(self):
@@ -1508,7 +1630,7 @@ class TestStreamWithFirstTokenRetryCore:
         print(f"Exception: {exc_info.value}")
         assert "500" in str(exc_info.value)
         assert "Internal Server Error" in str(exc_info.value)
-        print("✓ HTTP error handled correctly")
+        print("OK: HTTP error handled correctly")
     
     @pytest.mark.asyncio
     async def test_uses_custom_http_error_callback(self):
@@ -1547,7 +1669,7 @@ class TestStreamWithFirstTokenRetryCore:
         assert "Custom HTTP error" in str(exc_info.value)
         assert "429" in str(exc_info.value)
         assert "Rate limited" in str(exc_info.value)
-        print("✓ Custom HTTP error callback used correctly")
+        print("OK: Custom HTTP error callback used correctly")
     
     @pytest.mark.asyncio
     async def test_closes_response_on_timeout(self):
@@ -1590,7 +1712,7 @@ class TestStreamWithFirstTokenRetryCore:
             print(f"Response {i} aclose called: {response.aclose.called}")
             response.aclose.assert_called()
         
-        print("✓ Responses closed on timeout")
+        print("OK: Responses closed on timeout")
     
     @pytest.mark.asyncio
     async def test_propagates_non_timeout_exceptions(self):
@@ -1630,7 +1752,50 @@ class TestStreamWithFirstTokenRetryCore:
         
         assert call_count == 1  # Should NOT retry
         assert "Not a timeout error" in str(exc_info.value)
-        print("✓ Non-timeout exceptions propagated without retry")
+        print("OK: Non-timeout exceptions propagated without retry")
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_on_stream_interruption_after_first_token(self):
+        """
+        What it does: Propagates interruptions after first token without retry.
+        Goal: Preserve current behavior once partial output may already exist.
+        """
+        print("Setup: Mock request that disconnects after first token...")
+
+        call_count = 0
+
+        async def mock_make_request():
+            nonlocal call_count
+            call_count += 1
+            response = AsyncMock()
+            response.status_code = 200
+            response.aclose = AsyncMock()
+            return response
+
+        async def mock_stream_processor(response):
+            raise UpstreamStreamInterruptedError(
+                "Upstream stream interrupted after first token: incomplete chunked read",
+                first_token_received=True,
+            )
+            yield  # Make it a generator
+
+        print("Action: Streaming with post-first-token interruption...")
+
+        with pytest.raises(UpstreamStreamInterruptedError) as exc_info:
+            async for chunk in stream_with_first_token_retry(
+                make_request=mock_make_request,
+                stream_processor=mock_stream_processor,
+                max_retries=3,
+                first_token_timeout=30,
+            ):
+                pass
+
+        print(f"Call count: {call_count}")
+        print(f"Exception: {exc_info.value}")
+
+        assert call_count == 1
+        assert exc_info.value.first_token_received is True
+        print("OK: Post-first-token interruption propagated without retry")
     
     @pytest.mark.asyncio
     async def test_uses_configured_max_retries(self):
@@ -1669,7 +1834,7 @@ class TestStreamWithFirstTokenRetryCore:
         
         print(f"Call count: {call_count}")
         assert call_count == 5  # Should try exactly 5 times
-        print("✓ max_retries parameter respected")
+        print("OK: max_retries parameter respected")
     
     @pytest.mark.asyncio
     async def test_multiple_retries_then_success(self):
@@ -1712,7 +1877,7 @@ class TestStreamWithFirstTokenRetryCore:
         assert call_count == 3  # Failed twice, succeeded on third
         assert len(chunks) == 1
         assert chunks[0] == "finally_success"
-        print("✓ Multiple retries then success works correctly")
+        print("OK: Multiple retries then success works correctly")
     
     @pytest.mark.asyncio
     async def test_closes_response_on_http_error(self):
@@ -1748,4 +1913,4 @@ class TestStreamWithFirstTokenRetryCore:
         
         print(f"Response aclose called: {response.aclose.called}")
         response.aclose.assert_called()
-        print("✓ Response closed on HTTP error")
+        print("OK: Response closed on HTTP error")

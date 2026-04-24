@@ -985,6 +985,42 @@ class TestStreamingAnthropicErrorHandling:
         assert "incomplete chunked read" not in error_text.lower()
         assert "interrupted" in error_text.lower() or "upstream" in error_text.lower()
         print("✓ UpstreamStreamInterruptedError converted to normalized Anthropic SSE error")
+
+    @pytest.mark.asyncio
+    async def test_upstream_stream_interrupted_error_uses_connectivity_error_type(self, mock_response, mock_model_cache, mock_auth_manager):
+        """
+        What it does: Emits Anthropic connectivity_error for upstream stream interruptions.
+        Goal: Verify clients receive a network-style error type instead of a generic api_error.
+        """
+        from kiro.streaming_core import UpstreamStreamInterruptedError
+
+        print("Setup: Mock stream that raises UpstreamStreamInterruptedError...")
+
+        async def mock_parse_kiro_stream(*args, **kwargs):
+            raise UpstreamStreamInterruptedError(
+                "Upstream stream was interrupted (incomplete chunked read)",
+                first_token_received=True
+            )
+            yield
+
+        print("Action: Streaming to Anthropic format with UpstreamStreamInterruptedError...")
+        events = []
+
+        with patch('kiro.streaming_anthropic.parse_kiro_stream', mock_parse_kiro_stream):
+            with patch('kiro.streaming_anthropic.parse_bracket_tool_calls', return_value=[]):
+                try:
+                    async for event in stream_kiro_to_anthropic(
+                        mock_response, "claude-sonnet-4", mock_model_cache, mock_auth_manager
+                    ):
+                        events.append(event)
+                except RuntimeError:
+                    pass
+
+        error_events = [e for e in events if "event: error" in e]
+        assert len(error_events) == 1
+        assert '"type": "connectivity_error"' in error_events[0]
+        assert '"type": "api_error"' not in error_events[0]
+        print("✓ Upstream stream interruption uses connectivity_error")
     
     @pytest.mark.asyncio
     async def test_closes_response_in_finally(self, mock_response, mock_model_cache, mock_auth_manager):

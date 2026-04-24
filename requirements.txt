@@ -9,4 +9,3 @@ tiktoken
 # Testing dependencies
 pytest
 pytest-asyncio
-hypothesis

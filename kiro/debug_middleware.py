@@ -95,8 +95,10 @@ class DebugLoggerMiddleware(BaseHTTPMiddleware):
         
         # Initialize debug logging for this request
         # This sets up buffers and creates a loguru sink to capture app logs
-        debug_logger.prepare_new_request()
-        
+        debug_token = debug_logger.prepare_new_request()
+        if debug_token is not None:
+            request.state.debug_logger_token = debug_token
+
         # Read and log the raw request body
         # FastAPI caches the body after first read, so this is safe
         try:
@@ -112,5 +114,4 @@ class DebugLoggerMiddleware(BaseHTTPMiddleware):
         # - validation_exception_handler (for 422 validation errors)
         # - Generic exception handlers (for other errors)
         response = await call_next(request)
-        
         return response

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Kiro Gateway V2 - 增强版管理脚本，支持自动重载。
@@ -25,7 +25,10 @@ $Script:StateFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.state"
 $Script:OutLogFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.out.log"
 $Script:ErrLogFile = Join-Path $Script:RuntimeDir "kiro-gateway-v2.err.log"
 $Script:WatcherJobName = "KiroGatewayV2-CredWatcher"
-
+$Script:HealthCheckFailures = 0
+$Script:HealthCheckFailureThreshold = 3
+$Script:LogRotateMaxSizeMB = 5
+$Script:LogRotateKeepCount = 5
 $Script:GatewayPort = 8000
 $Script:ApiKey = ""
 $Script:AutoReloadEnabled = $true
@@ -36,6 +39,52 @@ function Ensure-RuntimeDirectory {
     if (-not (Test-Path -LiteralPath $Script:RuntimeDir)) {
         New-Item -ItemType Directory -Path $Script:RuntimeDir -Force | Out-Null
     }
+}
+
+function Write-StateLog {
+    param([string]$Message)
+
+    Ensure-RuntimeDirectory
+    $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    Add-Content -LiteralPath $Script:StateFile -Value "[$timestamp] $Message" -Encoding UTF8
+}
+
+function Rotate-LogFile {
+    param(
+        [string]$FilePath,
+        [string]$Label
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        return
+    }
+
+    $fileItem = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
+    if (-not $fileItem) {
+        return
+    }
+
+    $maxBytes = $Script:LogRotateMaxSizeMB * 1MB
+    if ($fileItem.Length -lt $maxBytes) {
+        return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $archivePath = "$FilePath.$timestamp"
+    Move-Item -LiteralPath $FilePath -Destination $archivePath -Force
+    Write-StateLog "$Label 日志已轮转: $(Split-Path -Leaf $archivePath)"
+
+    $archives = Get-ChildItem -Path "$FilePath.*" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+    if ($archives) {
+        $archives | Select-Object -Skip $Script:LogRotateKeepCount | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Rotate-LogsIfNeeded {
+    Ensure-RuntimeDirectory
+    Rotate-LogFile -FilePath $Script:OutLogFile -Label "stdout"
+    Rotate-LogFile -FilePath $Script:ErrLogFile -Label "stderr"
 }
 
 function Load-Config {
@@ -446,6 +495,7 @@ function Check-CredWatcherEvents {
 
 function Start-GatewayProcess {
     Ensure-RuntimeDirectory
+    Rotate-LogsIfNeeded
 
     $env:PYTHONIOENCODING = "utf-8"
     $env:SERVER_PORT = "$Script:GatewayPort"
@@ -501,9 +551,9 @@ function Test-GatewayHealth {
             -TimeoutSec 5 `
             -ErrorAction Stop
 
-        return $null -ne $health -and $health.status -eq "healthy"
+        return $health
     } catch {
-        return $false
+        return $null
     }
 }
 
@@ -525,7 +575,8 @@ function Wait-GatewayReady {
             }
         }
 
-        if (Test-GatewayHealth) {
+        $health = Test-GatewayHealth
+        if ($null -ne $health -and $health.status -eq "healthy") {
             return @{
                 Ready = $true
                 Reason = "health_check_passed"
@@ -556,6 +607,52 @@ function Wait-GatewayReady {
         Ready = $false
         Reason = "startup_timeout"
         ProcessId = $gatewayProcess.Id
+    }
+}
+
+function Invoke-ManagedGatewayHealthCheck {
+    $gatewayProcess = Get-ManagedGatewayProcess
+    if (-not $gatewayProcess) {
+        $Script:HealthCheckFailures = 0
+        return
+    }
+
+    $health = Test-GatewayHealth
+    if ($null -ne $health -and $health.status -eq "healthy") {
+        if ($Script:HealthCheckFailures -gt 0) {
+            Write-StateLog "健康检查恢复正常。"
+        }
+        $Script:HealthCheckFailures = 0
+        return
+    }
+
+    $Script:HealthCheckFailures += 1
+    Write-StateLog "健康检查失败 #$($Script:HealthCheckFailures)。"
+
+    if ($Script:HealthCheckFailures -lt $Script:HealthCheckFailureThreshold) {
+        return
+    }
+
+    Write-Host ""
+    Write-Host "健康检查连续失败，正在重启网关..." -ForegroundColor Yellow
+    Write-StateLog "健康检查连续失败，触发自动重启。"
+
+    $null = Stop-Gateway -Silent
+    Start-Sleep -Milliseconds 500
+
+    if (Start-GatewayProcess) {
+        $startupResult = Wait-GatewayReady
+        if ($startupResult.Ready) {
+            $Script:HealthCheckFailures = 0
+            Write-StateLog "自动重启成功。"
+            Write-Host "网关自动重启成功。" -ForegroundColor Green
+        } else {
+            Write-StateLog "自动重启后仍未就绪: $($startupResult.Reason)"
+            Write-Host "网关自动重启后仍未就绪，请查看日志。" -ForegroundColor Red
+        }
+    } else {
+        Write-StateLog "自动重启失败：无法启动网关进程。"
+        Write-Host "网关自动重启失败，请查看日志。" -ForegroundColor Red
     }
 }
 
@@ -679,6 +776,15 @@ function Test-API {
     try {
         $health = Invoke-RestMethod -Uri "http://localhost:$Script:GatewayPort/health" -TimeoutSec 5
         Write-Host "健康检查通过。版本=$($health.version)" -ForegroundColor Green
+        if ($null -ne $health.request_limiter) {
+            Write-Host "并发限制: limit=$($health.request_limiter.limit), available=$($health.request_limiter.available_slots), queue_timeout=$($health.request_limiter.queue_timeout_seconds)s" -ForegroundColor Gray
+        }
+        if ($null -ne $health.models) {
+            Write-Host "模型缓存: count=$($health.models.count), stale=$($health.models.cache_stale)" -ForegroundColor Gray
+        }
+        if ($null -ne $health.auth) {
+            Write-Host "认证状态: initialized=$($health.auth.initialized), type=$($health.auth.type), region=$($health.auth.region)" -ForegroundColor Gray
+        }
     } catch {
         Write-Host "健康检查失败。网关是否正在运行？" -ForegroundColor Red
         return
@@ -773,6 +879,9 @@ function Show-Menu {
         Check-CredWatcherEvents
     }
 
+    Rotate-LogsIfNeeded
+    Invoke-ManagedGatewayHealthCheck
+
     $runningStatus = if (Test-PortInUse -Port $Script:GatewayPort) { "运行中" } else { "已停止" }
     $runningColor = if ($runningStatus -eq "运行中") { "Green" } else { "Gray" }
     $account = Get-AccountInfo
@@ -786,6 +895,9 @@ function Show-Menu {
     $autoReloadStatus = if ($Script:AutoReloadEnabled) { "已启用" } else { "已禁用" }
     $autoReloadColor = if ($Script:AutoReloadEnabled) { "Green" } else { "Gray" }
     Write-Host "自动重载: $autoReloadStatus" -ForegroundColor $autoReloadColor
+    if ($runningStatus -eq "运行中") {
+        Write-Host "健康失败次数: $($Script:HealthCheckFailures)/$($Script:HealthCheckFailureThreshold)" -ForegroundColor Gray
+    }
 
     $watcherStatus = if (Get-Job -Name $Script:WatcherJobName -ErrorAction SilentlyContinue) { "运行中" } else { "未运行" }
     if ($Script:AutoReloadEnabled -and $runningStatus -eq "运行中") {

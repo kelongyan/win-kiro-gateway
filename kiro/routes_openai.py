@@ -27,6 +27,7 @@ Contains all API endpoints:
 """
 
 import json
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
@@ -38,6 +39,7 @@ from kiro.config import (
     PROXY_API_KEY,
     APP_VERSION,
     UPSTREAM_PROVIDER,
+    DEBUG_MODE,
 )
 from kiro.models_openai import (
     OpenAIModel,
@@ -56,6 +58,7 @@ from kiro.request_executor import (
     execute_kiro_request,
     parse_upstream_error,
 )
+from kiro.request_limiter import RequestLimiterBusy, acquire_request_slot, release_request_slot
 from kiro.utils import generate_conversation_id
 
 # Import debug_logger
@@ -110,17 +113,69 @@ async def root():
 
 
 @router.get("/health")
-async def health():
+async def health(request: Request):
     """
     Detailed health check.
-    
+
     Returns:
         Status, timestamp and version
     """
+    # 汇总本地运行态信息，避免健康检查主动访问上游导致额外压力。
+    auth_manager = getattr(request.app.state, "auth_manager", None)
+    model_cache = getattr(request.app.state, "model_cache", None)
+    health_counters = getattr(request.app.state, "health_counters", {})
+    started_at = getattr(request.app.state, "started_at", None)
+    limiter = getattr(request.app.state, "request_limiter", None)
+    limiter_limit = getattr(request.app.state, "request_limiter_limit", 0)
+    available_slots = None
+    if limiter is not None and hasattr(limiter, "_value"):
+        available_slots = limiter._value
+
+    auth_type = None
+    api_host = None
+    region = None
+    if auth_manager is not None:
+        auth_type_value = getattr(auth_manager, "auth_type", None)
+        auth_type = auth_type_value.value if auth_type_value is not None else None
+        api_host = getattr(auth_manager, "api_host", None)
+        region = getattr(auth_manager, "region", None)
+
+    model_count = None
+    cache_stale = None
+    if model_cache is not None:
+        model_count = model_cache.size
+        cache_stale = model_cache.is_stale()
+
+    uptime_seconds = 0
+    if started_at is not None:
+        uptime_seconds = max(0, int(time.time() - started_at))
+
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": APP_VERSION
+        "version": APP_VERSION,
+        "uptime_seconds": uptime_seconds,
+        "requests_total": health_counters.get("requests_total", 0),
+        "errors_total": health_counters.get("errors_total", 0),
+        "cached_responses": health_counters.get("cached_responses", 0),
+        "debug_mode": DEBUG_MODE,
+        "auth": {
+            "initialized": auth_manager is not None,
+            "type": auth_type,
+            "region": region,
+            "api_host": api_host,
+        },
+        "models": {
+            "initialized": model_cache is not None,
+            "count": model_count,
+            "cache_stale": cache_stale,
+        },
+        "request_limiter": {
+            "enabled": limiter is not None,
+            "limit": limiter_limit,
+            "available_slots": available_slots,
+            "queue_timeout_seconds": getattr(request.app.state, "request_queue_timeout", None),
+        },
     }
 
 @router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)])
@@ -180,7 +235,10 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         HTTPException: On validation or API errors
     """
     logger.info(f"Request to /v1/chat/completions (model={request_data.model}, stream={request_data.stream})")
-    
+    # 仅记录本地计数，帮助 /health 快速判断服务是否持续接流量。
+    health_counters = getattr(request.app.state, "health_counters", None)
+    if isinstance(health_counters, dict):
+        health_counters["requests_total"] = health_counters.get("requests_total", 0) + 1
     auth_manager: KiroAuthManager = request.app.state.auth_manager
     model_cache: ModelInfoCache = request.app.state.model_cache
     model_resolver: ModelResolver = request.app.state.model_resolver
@@ -282,7 +340,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         shared_client=shared_client,
         stream=request_data.stream
     )
+    limiter_acquired = False
     try:
+        limiter_acquired = await acquire_request_slot(request.app.state)
         # Make request to Kiro API (for both streaming and non-streaming modes)
         # Important: we wait for Kiro response BEFORE returning StreamingResponse,
         # so that 200 OK means Kiro accepted the request and started responding
@@ -291,7 +351,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         if response.status_code != 200:
             error_result = await parse_upstream_error(response)
             await close_route_http_client(http_client)
-            
+            release_request_slot(request.app.state, limiter_acquired)
+            limiter_acquired = False
+
             # Log access log for error (before flush, so it gets into app_logs)
             logger.warning(
                 f"HTTP {error_result.status_code} - POST /v1/chat/completions - {error_result.user_message[:100]}"
@@ -321,6 +383,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         if request_data.stream:
             # Streaming mode
             async def stream_wrapper():
+                nonlocal limiter_acquired
                 streaming_error = None
                 client_disconnected = False
                 try:
@@ -358,6 +421,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
                     else:
                         logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - completed")
+                    release_request_slot(request.app.state, limiter_acquired)
+                    limiter_acquired = False
                     # Write debug logs AFTER streaming completes
                     if debug_logger:
                         if streaming_error:
@@ -381,7 +446,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             )
             
             await close_route_http_client(http_client)
-            
+            release_request_slot(request.app.state, limiter_acquired)
+            limiter_acquired = False
+
             # Log access log for non-streaming success
             logger.info(f"HTTP 200 - POST /v1/chat/completions (non-streaming) - completed")
             
@@ -391,20 +458,46 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             
             return JSONResponse(content=openai_response)
     
+    except RequestLimiterBusy as e:
+        await close_route_http_client(http_client)
+        logger.warning(f"HTTP 429 - POST /v1/chat/completions - {e}")
+        if debug_logger:
+            debug_logger.flush_on_error(429, str(e))
+        if isinstance(health_counters, dict):
+            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "message": str(e),
+                    "type": "rate_limit_error",
+                    "code": 429
+                }
+            }
+        )
     except HTTPException as e:
         await close_route_http_client(http_client)
+        release_request_slot(request.app.state, limiter_acquired)
         # Log access log for HTTP error
         logger.error(f"HTTP {e.status_code} - POST /v1/chat/completions - {e.detail}")
+        if isinstance(health_counters, dict):
+            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
         # Flush debug logs on HTTP error ("errors" mode)
         if debug_logger:
             debug_logger.flush_on_error(e.status_code, str(e.detail))
         raise
     except Exception as e:
         await close_route_http_client(http_client)
+        release_request_slot(request.app.state, limiter_acquired)
         logger.error(f"Internal error: {e}", exc_info=True)
+        if isinstance(health_counters, dict):
+            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
         # Log access log for internal error
         logger.error(f"HTTP 500 - POST /v1/chat/completions - {str(e)[:100]}")
         # Flush debug logs on internal error ("errors" mode)
         if debug_logger:
             debug_logger.flush_on_error(500, str(e))
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+    finally:
+        if debug_logger:
+            debug_logger.clear_request(request)

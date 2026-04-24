@@ -107,6 +107,34 @@ def _parse_csv_env_list(raw_value: str) -> List[str]:
 
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
+def _parse_positive_int_env(var_name: str, default: int) -> int:
+    """解析正整数环境变量，非法值回退默认值。"""
+    raw_value = os.getenv(var_name, "").strip()
+    if not raw_value:
+        return default
+
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default
+
+    return parsed if parsed > 0 else default
+
+
+def _parse_positive_float_env(var_name: str, default: float) -> float:
+    """解析正浮点环境变量，非法值回退默认值。"""
+    raw_value = os.getenv(var_name, "").strip()
+    if not raw_value:
+        return default
+
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        return default
+
+    return parsed if parsed > 0 else default
+
+
 # ==================================================================================================
 # Server Settings
 # ==================================================================================================
@@ -151,6 +179,16 @@ CORS_ALLOWED_ORIGINS: List[str] = (
     if _raw_cors_allowed_origins.strip()
     else DEFAULT_CORS_ALLOWED_ORIGINS.copy()
 )
+
+# ==================================================================================================
+# Request Stability Settings
+# ==================================================================================================
+
+# Global application-level backpressure for model requests.
+MAX_CONCURRENT_REQUESTS: int = _parse_positive_int_env("MAX_CONCURRENT_REQUESTS", 20)
+
+# Maximum seconds a request waits for an available concurrency slot.
+REQUEST_QUEUE_TIMEOUT: float = _parse_positive_float_env("REQUEST_QUEUE_TIMEOUT", 5.0)
 
 # ==================================================================================================
 # VPN/Proxy Settings for Kiro API Access

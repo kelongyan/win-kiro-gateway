@@ -10,7 +10,49 @@ import os
 from unittest.mock import patch
 
 
-class TestLogLevelConfig:
+
+class TestRequestStabilityConfig:
+    """Tests for request concurrency and queue timeout configuration."""
+
+    def test_default_request_stability_config(self):
+        """验证请求稳定性配置默认值。"""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MAX_CONCURRENT_REQUESTS", None)
+            os.environ.pop("REQUEST_QUEUE_TIMEOUT", None)
+
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+
+            assert config_module.MAX_CONCURRENT_REQUESTS == 20
+            assert config_module.REQUEST_QUEUE_TIMEOUT == 5.0
+
+    def test_request_stability_config_from_environment(self):
+        """验证请求稳定性配置可从环境变量读取。"""
+        with patch.dict(os.environ, {
+            "MAX_CONCURRENT_REQUESTS": "7",
+            "REQUEST_QUEUE_TIMEOUT": "1.5",
+        }):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+
+            assert config_module.MAX_CONCURRENT_REQUESTS == 7
+            assert config_module.REQUEST_QUEUE_TIMEOUT == 1.5
+
+    def test_invalid_request_stability_config_falls_back_to_default(self):
+        """验证非法请求稳定性配置会回退默认值。"""
+        with patch.dict(os.environ, {
+            "MAX_CONCURRENT_REQUESTS": "0",
+            "REQUEST_QUEUE_TIMEOUT": "invalid",
+        }):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+
+            assert config_module.MAX_CONCURRENT_REQUESTS == 20
+            assert config_module.REQUEST_QUEUE_TIMEOUT == 5.0
+
     """Tests for LOG_LEVEL configuration."""
     
     def test_default_log_level_is_info(self):

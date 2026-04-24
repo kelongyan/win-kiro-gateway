@@ -56,6 +56,7 @@ from kiro.request_executor import (
     execute_kiro_request,
     parse_upstream_error,
 )
+from kiro.request_limiter import RequestLimiterBusy, acquire_request_slot, release_request_slot
 from kiro.utils import generate_conversation_id
 from kiro.tokenizer import count_tools_tokens
 
@@ -149,8 +150,10 @@ async def messages(
         HTTPException: On validation or API errors
     """
     logger.info(f"Request to /v1/messages (model={request_data.model}, stream={request_data.stream})")
-    
-    if anthropic_version:
+    # 仅记录本地计数，帮助 /health 快速判断服务是否持续接流量。
+    health_counters = getattr(request.app.state, "health_counters", None)
+    if isinstance(health_counters, dict):
+        health_counters["requests_total"] = health_counters.get("requests_total", 0) + 1
         logger.debug(f"Anthropic-Version header: {anthropic_version}")
     
     auth_manager: KiroAuthManager = request.app.state.auth_manager
@@ -312,7 +315,9 @@ async def messages(
     messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
     tools_for_tokenizer = [tool.model_dump() for tool in request_data.tools] if request_data.tools else None
     
+    limiter_acquired = False
     try:
+        limiter_acquired = await acquire_request_slot(request.app.state)
         # Make request to Kiro API (for both streaming and non-streaming modes)
         # Important: we wait for Kiro response BEFORE returning StreamingResponse,
         # so that we can return proper HTTP error codes if Kiro fails
@@ -321,6 +326,8 @@ async def messages(
         if response.status_code != 200:
             error_result = await parse_upstream_error(response)
             await close_route_http_client(http_client)
+            release_request_slot(request.app.state, limiter_acquired)
+            limiter_acquired = False
             
             # Log access log for error (before flush, so it gets into app_logs)
             logger.warning(
@@ -346,6 +353,7 @@ async def messages(
         if request_data.stream:
             # Streaming mode - Kiro already returned 200, now stream the response
             async def stream_wrapper():
+                nonlocal limiter_acquired
                 streaming_error = None
                 client_disconnected = False
                 try:
@@ -379,6 +387,9 @@ async def messages(
                     else:
                         logger.info(f"HTTP 200 - POST /v1/messages (streaming) - completed")
                     
+                    release_request_slot(request.app.state, limiter_acquired)
+                    limiter_acquired = False
+
                     if debug_logger:
                         if streaming_error:
                             debug_logger.flush_on_error(500, str(streaming_error))
@@ -405,7 +416,9 @@ async def messages(
             )
             
             await close_route_http_client(http_client)
-            
+            release_request_slot(request.app.state, limiter_acquired)
+            limiter_acquired = False
+
             logger.info(f"HTTP 200 - POST /v1/messages (non-streaming) - completed")
             
             if debug_logger:
@@ -413,19 +426,42 @@ async def messages(
             
             return JSONResponse(content=anthropic_response)
     
+    except RequestLimiterBusy as e:
+        await close_route_http_client(http_client)
+        logger.warning(f"HTTP 429 - POST /v1/messages - {e}")
+        if debug_logger:
+            debug_logger.flush_on_error(429, str(e))
+        if isinstance(health_counters, dict):
+            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
+        return JSONResponse(
+            status_code=429,
+            content={
+                "type": "error",
+                "error": {
+                    "type": "rate_limit_error",
+                    "message": str(e)
+                }
+            }
+        )
     except HTTPException as e:
         await close_route_http_client(http_client)
+        release_request_slot(request.app.state, limiter_acquired)
         logger.error(f"HTTP {e.status_code} - POST /v1/messages - {e.detail}")
+        if isinstance(health_counters, dict):
+            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
         if debug_logger:
             debug_logger.flush_on_error(e.status_code, str(e.detail))
         raise
     except Exception as e:
         await close_route_http_client(http_client)
+        release_request_slot(request.app.state, limiter_acquired)
         logger.error(f"Internal error: {e}", exc_info=True)
+        if isinstance(health_counters, dict):
+            health_counters["errors_total"] = health_counters.get("errors_total", 0) + 1
         logger.error(f"HTTP 500 - POST /v1/messages - {str(e)[:100]}")
         if debug_logger:
             debug_logger.flush_on_error(500, str(e))
-        
+
         return JSONResponse(
             status_code=500,
             content={
@@ -436,3 +472,6 @@ async def messages(
                 }
             }
         )
+    finally:
+        if debug_logger:
+            debug_logger.clear_request(request)

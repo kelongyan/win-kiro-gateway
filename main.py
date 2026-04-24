@@ -40,10 +40,12 @@ Priority: CLI args > Environment variables > Default values
 """
 
 import argparse
+import asyncio
 import importlib
 import logging
 import sys
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -75,6 +77,8 @@ SERVER_PORT = config_module.SERVER_PORT
 DEFAULT_SERVER_HOST = config_module.DEFAULT_SERVER_HOST
 DEFAULT_SERVER_PORT = config_module.DEFAULT_SERVER_PORT
 STREAMING_READ_TIMEOUT = config_module.STREAMING_READ_TIMEOUT
+MAX_CONCURRENT_REQUESTS = config_module.MAX_CONCURRENT_REQUESTS
+REQUEST_QUEUE_TIMEOUT = config_module.REQUEST_QUEUE_TIMEOUT
 HIDDEN_MODELS = config_module.HIDDEN_MODELS
 MODEL_ALIASES = config_module.MODEL_ALIASES
 HIDDEN_FROM_LIST = config_module.HIDDEN_FROM_LIST
@@ -355,8 +359,22 @@ async def lifespan(app: FastAPI):
         timeout=timeout,
         follow_redirects=True
     )
+    app.state.started_at = time.time()
+    app.state.health_counters = {
+        "requests_total": 0,
+        "errors_total": 0,
+        "cached_responses": 0,
+    }
     logger.info("Shared HTTP client created with connection pooling")
-    
+
+    app.state.request_limiter = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    app.state.request_limiter_limit = MAX_CONCURRENT_REQUESTS
+    app.state.request_queue_timeout = REQUEST_QUEUE_TIMEOUT
+    logger.info(
+        f"Request limiter initialized: max_concurrent={MAX_CONCURRENT_REQUESTS}, "
+        f"queue_timeout={REQUEST_QUEUE_TIMEOUT}s"
+    )
+
     # Create AuthManager
     # Priority: SQLite DB > JSON file > environment variables
     app.state.auth_manager = KiroAuthManager(

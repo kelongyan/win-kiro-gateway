@@ -5,6 +5,7 @@ Unit-тесты для DebugLogger.
 Проверяет логику буферизации и записи debug логов в разных режимах.
 """
 
+import contextvars
 import json
 import pytest
 from pathlib import Path
@@ -688,3 +689,69 @@ class TestDebugLoggerAppLogsCapture:
             print(f"Проверяем, что app_logs.txt НЕ создан...")
             app_logs_file = debug_dir / "app_logs.txt"
             assert not app_logs_file.exists()
+
+class TestDebugLoggerRequestScopedSessions:
+    """并发请求下的上下文隔离测试。"""
+
+    def test_prepare_new_request_returns_context_token(self, tmp_path):
+        """验证 prepare_new_request 会返回 contextvars token。"""
+        with patch('kiro.debug_logger.DEBUG_MODE', 'errors'):
+            from kiro.debug_logger import DebugLogger
+
+            dbg_logger = DebugLogger.__new__(DebugLogger)
+            dbg_logger._initialized = False
+            dbg_logger.__init__()
+            dbg_logger.debug_dir = tmp_path / "debug_logs"
+
+            token = dbg_logger.prepare_new_request()
+
+            assert isinstance(token, contextvars.Token)
+
+    def test_request_buffers_are_isolated_between_sessions(self, tmp_path):
+        """验证切换上下文后每个请求拥有独立缓冲区。"""
+        with patch('kiro.debug_logger.DEBUG_MODE', 'errors'):
+            from kiro.debug_logger import DebugLogger
+
+            dbg_logger = DebugLogger.__new__(DebugLogger)
+            dbg_logger._initialized = False
+            dbg_logger.__init__()
+            dbg_logger.debug_dir = tmp_path / "debug_logs"
+
+            first_token = dbg_logger.prepare_new_request()
+            dbg_logger.log_request_body(b'first')
+            first_session = dbg_logger._get_session()
+
+            second_token = dbg_logger.prepare_new_request()
+            dbg_logger.log_request_body(b'second')
+            second_session = dbg_logger._get_session()
+
+            assert first_session is not second_session
+            assert first_session.request_body_buffer == b'first'
+            assert second_session.request_body_buffer == b'second'
+
+            dbg_logger.reset_request(second_token)
+            dbg_logger.reset_request(first_token)
+
+    def test_reset_request_restores_previous_session(self, tmp_path):
+        """验证 reset_request 可恢复进入新请求前的上下文。"""
+        with patch('kiro.debug_logger.DEBUG_MODE', 'errors'):
+            from kiro.debug_logger import DebugLogger
+
+            dbg_logger = DebugLogger.__new__(DebugLogger)
+            dbg_logger._initialized = False
+            dbg_logger.__init__()
+            dbg_logger.debug_dir = tmp_path / "debug_logs"
+
+            outer_token = dbg_logger.prepare_new_request()
+            dbg_logger.log_request_body(b'outer')
+            outer_session = dbg_logger._get_session()
+
+            inner_token = dbg_logger.prepare_new_request()
+            dbg_logger.log_request_body(b'inner')
+
+            dbg_logger.reset_request(inner_token)
+
+            assert dbg_logger._get_session() is outer_session
+            assert dbg_logger._request_body_buffer == b'outer'
+
+            dbg_logger.reset_request(outer_token)

@@ -5,6 +5,8 @@ Unit tests for DebugLoggerMiddleware.
 Tests debug logging initialization at the middleware level.
 """
 
+import types
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.requests import Request
@@ -29,6 +31,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
             
             # Mock request
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/health"
             
             # Mock call_next
@@ -63,6 +66,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/docs"
             
             mock_response = MagicMock(spec=Response)
@@ -89,6 +93,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/"
             
             mock_response = MagicMock(spec=Response)
@@ -115,6 +120,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'{"model": "test"}')
             
@@ -127,6 +133,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
                 
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
+                assert mock_request.state.debug_logger_token is mock_logger.prepare_new_request.return_value
                 
                 print("Verifying log_request_body was called...")
                 mock_logger.log_request_body.assert_called_once_with(b'{"model": "test"}')
@@ -145,6 +152,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/messages"
             mock_request.body = AsyncMock(return_value=b'{"model": "claude"}')
             
@@ -157,6 +165,7 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
                 
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
+                assert mock_request.state.debug_logger_token is mock_logger.prepare_new_request.return_value
 
 
 class TestDebugLoggerMiddlewareModeHandling:
@@ -176,6 +185,7 @@ class TestDebugLoggerMiddlewareModeHandling:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/chat/completions"
             
             mock_response = MagicMock(spec=Response)
@@ -205,6 +215,7 @@ class TestDebugLoggerMiddlewareModeHandling:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'{"test": "data"}')
             
@@ -217,6 +228,7 @@ class TestDebugLoggerMiddlewareModeHandling:
                 
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
+                assert mock_request.state.debug_logger_token is mock_logger.prepare_new_request.return_value
     
     @pytest.mark.asyncio
     async def test_processes_when_debug_mode_all(self):
@@ -232,6 +244,7 @@ class TestDebugLoggerMiddlewareModeHandling:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/messages"
             mock_request.body = AsyncMock(return_value=b'{"test": "data"}')
             
@@ -244,6 +257,7 @@ class TestDebugLoggerMiddlewareModeHandling:
                 
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
+                assert mock_request.state.debug_logger_token is mock_logger.prepare_new_request.return_value
 
 
 class TestDebugLoggerMiddlewareErrorHandling:
@@ -263,6 +277,7 @@ class TestDebugLoggerMiddlewareErrorHandling:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(side_effect=Exception("Body read error"))
             
@@ -275,6 +290,7 @@ class TestDebugLoggerMiddlewareErrorHandling:
                 
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
+                assert mock_request.state.debug_logger_token is mock_logger.prepare_new_request.return_value
                 
                 print("Verifying log_request_body was NOT called (due to error)...")
                 mock_logger.log_request_body.assert_not_called()
@@ -296,6 +312,7 @@ class TestDebugLoggerMiddlewareErrorHandling:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'')  # Empty body
             
@@ -308,6 +325,7 @@ class TestDebugLoggerMiddlewareErrorHandling:
                 
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
+                assert mock_request.state.debug_logger_token is mock_logger.prepare_new_request.return_value
                 
                 print("Verifying log_request_body was NOT called (body is empty)...")
                 mock_logger.log_request_body.assert_not_called()
@@ -330,6 +348,7 @@ class TestDebugLoggerMiddlewareResponsePassthrough:
             middleware = DebugLoggerMiddleware(app=MagicMock())
             
             mock_request = MagicMock(spec=Request)
+            mock_request.state = types.SimpleNamespace()
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'{"test": "data"}')
             

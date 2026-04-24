@@ -241,7 +241,7 @@ class TestHealthEndpoint:
         """
         print("Action: GET /health...")
         response = test_client.get("/health")
-        
+
         print(f"Result: {response.json()}")
         assert response.status_code == 200
         assert response.json()["version"] == APP_VERSION
@@ -253,9 +253,47 @@ class TestHealthEndpoint:
         """
         print("Action: GET /health without auth headers...")
         response = test_client.get("/health")
-        
+
         print(f"Status: {response.status_code}")
         assert response.status_code == 200
+
+    def test_health_returns_local_diagnostics(self, test_client):
+        """
+        What it does: Verifies health endpoint returns local diagnostic fields.
+        Purpose: Ensure local supervisor can diagnose process state without upstream calls.
+        """
+        print("Action: Preparing local health state...")
+        test_client.app.state.started_at = 100.0
+        test_client.app.state.health_counters = {
+            "requests_total": 12,
+            "errors_total": 2,
+            "cached_responses": 0,
+        }
+        test_client.app.state.request_limiter_limit = 20
+        test_client.app.state.request_queue_timeout = 5.0
+        limiter = MagicMock()
+        limiter._value = 7
+        test_client.app.state.request_limiter = limiter
+        test_client.app.state.model_cache._last_update = 123.0
+
+        print("Action: GET /health...")
+        with patch("kiro.routes_openai.time.time", return_value=160.0):
+            response = test_client.get("/health")
+
+        result = response.json()
+        print(f"Result: {result}")
+        assert response.status_code == 200
+        assert result["uptime_seconds"] == 60
+        assert result["requests_total"] == 12
+        assert result["errors_total"] == 2
+        assert result["debug_mode"] in ("off", "errors", "all")
+        assert result["auth"]["initialized"] is True
+        assert result["models"]["initialized"] is True
+        assert result["models"]["count"] >= 0
+        assert result["request_limiter"]["enabled"] is True
+        assert result["request_limiter"]["limit"] == 20
+        assert result["request_limiter"]["available_slots"] == 7
+        assert result["request_limiter"]["queue_timeout_seconds"] == 5.0
 
 
 # =============================================================================

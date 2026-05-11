@@ -38,3 +38,4 @@ tmp_*smoke*.ps1
 pytest-cache-files-*/
 .coverage
 htmlcov/
+Kiro-account-manager_学习项目/
